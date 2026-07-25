@@ -165,6 +165,7 @@ function App() {
   })
   const [notice, setNotice] = useState('Выберите бумагу из списка рынка')
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null)
+  const [editingPosition, setEditingPosition] = useState(false)
   const [detailInstrument, setDetailInstrument] = useState<Instrument | null>(null)
   const [quantity, setQuantity] = useState('1')
   const [buyPrice, setBuyPrice] = useState('')
@@ -247,9 +248,19 @@ function App() {
 
   const openAddInstrument = (instrument: Instrument) => {
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light')
+    setEditingPosition(false)
     setSelectedInstrument(instrument)
     setQuantity('1')
     setBuyPrice(String(instrument.valuePrice))
+  }
+
+  const openEditPosition = (instrument: Instrument) => {
+    const position = portfolio[instrument.ticker]
+    if (!position) return
+    setEditingPosition(true)
+    setSelectedInstrument(instrument)
+    setQuantity(String(position.quantity))
+    setBuyPrice(String(position.buyPrice))
   }
 
   const addInstrument = () => {
@@ -257,6 +268,7 @@ function App() {
     const amount = Math.max(1, Number(quantity) || 1)
     const price = Math.max(0, Number(buyPrice) || selectedInstrument.valuePrice)
     setPortfolio((current) => {
+      if (editingPosition) return { ...current, [selectedInstrument.ticker]: { quantity: amount, buyPrice: price } }
       const existing = current[selectedInstrument.ticker]
       const totalQuantity = (existing?.quantity ?? 0) + amount
       const averagePrice = existing
@@ -264,7 +276,7 @@ function App() {
         : price
       return { ...current, [selectedInstrument.ticker]: { quantity: totalQuantity, buyPrice: averagePrice } }
     })
-    setNotice(`${selectedInstrument.ticker} добавлен в портфель`)
+    setNotice(editingPosition ? `${selectedInstrument.ticker} обновлён` : `${selectedInstrument.ticker} добавлен в портфель`)
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium')
     setSelectedInstrument(null)
   }
@@ -595,13 +607,13 @@ function App() {
         <div className="modal-backdrop" onClick={() => setSelectedInstrument(null)}>
           <form className="asset-modal" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); addInstrument() }}>
             <button className="modal-close" type="button" onClick={() => setSelectedInstrument(null)} aria-label="Закрыть">×</button>
-            <p className="eyebrow">ДОБАВИТЬ В ПОРТФЕЛЬ</p>
+            <p className="eyebrow">{editingPosition ? 'ИЗМЕНИТЬ ПОЗИЦИЮ' : 'ДОБАВИТЬ В ПОРТФЕЛЬ'}</p>
             <h2>{selectedInstrument.name}</h2>
             <p className="modal-caption">{selectedInstrument.ticker} · текущая цена {formatPrice(selectedInstrument)}</p>
             <label>Количество<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
             <label>Цена покупки за бумагу, ₽<input type="number" min="0" step="0.01" value={buyPrice} onChange={(event) => setBuyPrice(event.target.value)} /></label>
             <div className="modal-total"><span>Сумма</span><strong>{((Number(quantity) || 0) * (Number(buyPrice) || 0)).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
-            <button className="modal-submit" type="submit">Добавить актив</button>
+            <button className="modal-submit" type="submit">{editingPosition ? 'Сохранить изменения' : 'Добавить актив'}</button>
           </form>
         </div>
       )}
@@ -632,7 +644,12 @@ function App() {
               </>}
             </div>
             <p className="detail-note">{detailInstrument.kind === 'Облигация' ? 'Цена облигации на бирже указана в процентах от номинала. Цена за бумагу учитывает НКД.' : 'Изменение рассчитано относительно предыдущей торговой сессии.'}</p>
-            <button className="modal-submit" type="button" onClick={() => { const instrument = detailInstrument; setDetailInstrument(null); openAddInstrument(instrument) }}>＋ Добавить в портфель</button>
+            <button className="modal-submit" type="button" onClick={() => {
+              const instrument = detailInstrument
+              setDetailInstrument(null)
+              if (portfolio[instrument.ticker]) openEditPosition(instrument)
+              else openAddInstrument(instrument)
+            }}>{portfolio[detailInstrument.ticker] ? 'Изменить позицию' : '＋ Добавить в портфель'}</button>
           </section>
         </div>
       )}
