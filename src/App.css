@@ -2,7 +2,7 @@
 .topbar { position: sticky; z-index: 10; top: 0; display: flex; align-items: center; gap: 28px; padding: 13px max(18px, calc((100% - 1120px) / 2)); border-bottom: 1px solid rgba(168, 177, 238, .14); background: rgba(8, 10, 22, .78); box-shadow: 0 12px 45px rgba(0, 0, 0, .12); backdrop-filter: blur(22px); }
 .brand { display: flex; align-items: center; gap: 10px; color: #f1f3ff; font-size: 18px; font-weight: 800; text-decoration: none; }
 .brand-mark { display: block; width: 54px; height: 54px; border-radius: 15px; object-fit: cover; filter: drop-shadow(0 7px 14px rgba(15, 105, 226, .3)); }
-.brand-copy { display: grid; gap: 1px; }.brand-copy strong { font-size: 17px; letter-spacing: -.25px; }.brand-copy small { color: #7f89ae; font-size: 9px; font-weight: 700; letter-spacing: .4px; }
+.brand-copy { display: grid; gap: 1px; }.brand-copy small { max-width: 190px; color: #aab6dc; font-size: 11px; font-weight: 700; letter-spacing: .2px; line-height: 1.25; }
 .eyebrow { margin: 0 0 3px; font-size: 10px; font-weight: 800; letter-spacing: 1.4px; color: #a9b2d8; }
 h1, h2, h3, p { margin: 0; } h1 { max-width: 720px; font: 700 clamp(44px, 7vw, 82px)/.98 'Playfair Display', serif; letter-spacing: -3px; } h2 { font-size: 25px; letter-spacing: -.6px; } h3 { font-size: 16px; }
 .site-nav { display: flex; gap: 24px; margin-left: auto; }.site-nav a { color: #aeb6d7; font-size: 13px; text-decoration: none; }.site-nav a:hover { color: #fff; }.header-button { padding: 10px 17px; border-radius: 11px; color: #15172c; background: #eef0ff; font-size: 13px; font-weight: 800; text-decoration: none; }

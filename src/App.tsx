@@ -277,8 +277,7 @@ function App() {
         <a className="brand" href="#">
           <img className="brand-mark" src={`${import.meta.env.BASE_URL}investai-logo.png`} alt="InvestAI" />
           <span className="brand-copy">
-            <strong>InvestAI</strong>
-            <small>{isTelegram ? `Привет, ${name}` : 'умные инвестиции'}</small>
+            <small>{isTelegram ? `Привет, ${name}` : 'Ваш инвестиционный помощник'}</small>
           </span>
         </a>
         <nav className="site-nav" aria-label="Навигация">
