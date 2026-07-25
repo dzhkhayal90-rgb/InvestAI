@@ -140,4 +140,15 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 26px
 .theme-light .status-pill, .theme-light .demo-label.live { color: #087a3d; background: #dff5e8; }.theme-light .status-pill.status-error, .theme-light .demo-label.error { color: #8a4b09; background: #fff0d9; }
 .theme-light .goal-head button, .theme-light .backup-actions button, .theme-light .backup-actions label, .theme-light .goal-plan select, .theme-light .calculator-button { color: #242429; border-color: #d7d7dd; background: #e8e8ec; }
 .theme-light .payment-event > strong, .theme-light .payment-event > div strong, .theme-light .payment-month strong, .theme-light .holdings-legend strong, .theme-light .lesson-list button strong, .theme-light .checklist-list strong { color: #18181b; }
+.theme-light .market-filters button { color: #3f3f46; border-color: #d6d6dc; background: #eeeef1; }
+.theme-light .market-filters button.active { color: #fff; border-color: #242427; background: #242427; }
+.theme-light .market-sort { color: #52525a; }.theme-light .market-sort select { color: #202024; border-color: #d6d6dc; background: #fff; }
+.theme-light .detail-modal { color: #18181b; background: #fff; }
+.theme-light .detail-title h2, .theme-light .detail-price strong, .theme-light .detail-grid strong { color: #18181b; }
+.theme-light .detail-price { border-color: #d9d9df; background: linear-gradient(140deg, #f4f6ff, #eceff9); }
+.theme-light .detail-price span, .theme-light .detail-grid span { color: #575762; }
+.theme-light .detail-grid div { color: #18181b; background: #f0f0f3; }
+.theme-light .detail-note { color: #55555f; }
+.theme-light .detail-modal .instrument-badge { color: #202024; background: #e5e5e9; }
+.theme-light .detail-modal .modal-submit { color: #fff; background: #242427; }
 @media (max-width: 480px) { .analytics-allocation { grid-template-columns: 1fr; justify-items: center; }.analytics-allocation .holdings-legend { width: 100%; }.analytics-chart { height: 165px; } }
