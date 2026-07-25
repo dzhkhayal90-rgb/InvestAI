@@ -48,6 +48,7 @@ type Position = {
 }
 
 type Currency = 'RUB' | 'USD' | 'EUR'
+type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai'
 
 const fallbackInstruments: Instrument[] = [
   { secid: 'SBER', ticker: 'SBER', name: 'Сбербанк', kind: 'Акция', category: 'Акции', price: 310.5, valuePrice: 310.5, change: 1.24 },
@@ -146,6 +147,7 @@ function App() {
   const [marketSort, setMarketSort] = useState<'name' | 'growth' | 'decline' | 'price'>('name')
   const [visibleCount, setVisibleCount] = useState(20)
   const [resultPeriod, setResultPeriod] = useState<'today' | 'all'>('today')
+  const [activeSection, setActiveSection] = useState<AppSection>('portfolio')
   const [currency, setCurrency] = useState<Currency>(() => (localStorage.getItem('investai-currency') as Currency | null) ?? 'RUB')
   const [currencyRates, setCurrencyRates] = useState<Record<Currency, number>>({ RUB: 1, USD: 90, EUR: 98 })
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
@@ -367,7 +369,7 @@ function App() {
         <a className="header-button" href="#market">Начать</a>
       </header>
 
-      <main className="app-shell">
+      <main className={`app-shell view-${activeSection}`}>
         <section className="intro">
           <div>
             <p className="eyebrow">УМНЫЙ ПОРТФЕЛЬ</p>
@@ -388,7 +390,7 @@ function App() {
         <section className="dashboard-grid" id="portfolio">
           <div>
             <p className="eyebrow">ЛИЧНЫЙ КАБИНЕТ</p>
-            <h2>Ваш портфель</h2>
+            <h2>{isTelegram ? 'Главная' : 'Ваш портфель'}</h2>
           </div>
           <div className={`status-pill ${marketStatus === 'error' ? 'status-error' : ''}`}>
             ● {marketStatus === 'loading' ? 'Загрузка MOEX' : marketStatus === 'live' ? 'Данные MOEX' : 'Нет связи с MOEX'}
@@ -419,7 +421,9 @@ function App() {
                 <span><small>Активов</small><strong>{portfolioItems.length}</strong></span>
               </div>
             )}
-            <a className="primary-button" href="#market">＋ Добавить актив</a>
+            {isTelegram
+              ? <button className="primary-button" type="button" onClick={() => setActiveSection('market')}>＋ Добавить актив</button>
+              : <a className="primary-button" href="#market">＋ Добавить актив</a>}
           </article>
           <div className="quick-stats">
             <article><span className="stat-icon pink">₽</span><div><p>Ближайшие купоны</p><strong>{portfolioBonds.length ? `${expectedCoupons.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : 'Добавьте облигации'}</strong></div></article>
@@ -446,7 +450,7 @@ function App() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">ВАШИ АКТИВЫ</p>
-            <h2>Портфель</h2>
+            <h2>{isTelegram ? 'Активы' : 'Портфель'}</h2>
           </div>
           <button className="text-button">Смотреть всё</button>
         </div>
@@ -602,10 +606,10 @@ function App() {
       <footer><span>InvestAI</span><p>Демонстрационный сервис. Не является инвестиционной рекомендацией.</p></footer>
 
       <nav className="telegram-nav" aria-label="Навигация приложения">
-        <a href="#portfolio"><span>▣</span>Портфель</a>
-        <a href="#market"><span>◔</span>Рынок</a>
-        <a href="#coupons"><span>₽</span>Купоны</a>
-        <a href="#ai"><span>✦</span>AI</a>
+        <button className={activeSection === 'portfolio' ? 'active' : undefined} type="button" onClick={() => setActiveSection('portfolio')}><span>▣</span>Главная</button>
+        <button className={activeSection === 'market' ? 'active' : undefined} type="button" onClick={() => setActiveSection('market')}><span>◔</span>Рынок</button>
+        <button className={activeSection === 'coupons' ? 'active' : undefined} type="button" onClick={() => setActiveSection('coupons')}><span>₽</span>Купоны</button>
+        <button className={activeSection === 'ai' ? 'active' : undefined} type="button" onClick={() => setActiveSection('ai')}><span>✦</span>AI</button>
       </nav>
 
       {selectedInstrument && (
