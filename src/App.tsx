@@ -141,6 +141,7 @@ function App() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
   const [marketQuery, setMarketQuery] = useState('')
   const [marketFilter, setMarketFilter] = useState<'Все' | Instrument['category']>('Все')
+  const [marketSort, setMarketSort] = useState<'name' | 'growth' | 'decline' | 'price'>('name')
   const [visibleCount, setVisibleCount] = useState(20)
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
     const saved = localStorage.getItem('investai-portfolio')
@@ -168,12 +169,18 @@ function App() {
   const favoriteItems = instruments.filter((instrument) => favorites.includes(instrument.ticker))
   const filteredInstruments = useMemo(() => {
     const query = marketQuery.trim().toLocaleLowerCase('ru')
-    return instruments.filter((instrument) => {
+    const filtered = instruments.filter((instrument) => {
       const matchesFilter = marketFilter === 'Все' || instrument.category === marketFilter
       const matchesQuery = !query || `${instrument.ticker} ${instrument.name}`.toLocaleLowerCase('ru').includes(query)
       return matchesFilter && matchesQuery
     })
-  }, [instruments, marketFilter, marketQuery])
+    return [...filtered].sort((a, b) => {
+      if (marketSort === 'growth') return (b.change ?? -Infinity) - (a.change ?? -Infinity)
+      if (marketSort === 'decline') return (a.change ?? Infinity) - (b.change ?? Infinity)
+      if (marketSort === 'price') return b.valuePrice - a.valuePrice
+      return a.name.localeCompare(b.name, 'ru')
+    })
+  }, [instruments, marketFilter, marketQuery, marketSort])
   const portfolioValue = useMemo(
     () => portfolioItems.reduce((sum, instrument) => sum + instrument.valuePrice * portfolio[instrument.ticker].quantity, 0),
     [portfolio, portfolioItems],
@@ -194,6 +201,11 @@ function App() {
     100,
     Math.round(portfolioItems.length * 14 + Math.min(stockShare, 100 - stockShare) * 0.9),
   )
+  const riskLevel = portfolioItems.length < 2 || largestPositionShare > 70 || stockShare > 85
+    ? 'Высокий'
+    : largestPositionShare > 45 || stockShare > 65
+      ? 'Средний'
+      : 'Умеренный'
   const portfolioBonds = portfolioItems
     .filter((item) => item.kind === 'Облигация' && item.couponValue)
     .sort((a, b) => (a.couponDate ? new Date(a.couponDate).getTime() : Infinity) - (b.couponDate ? new Date(b.couponDate).getTime() : Infinity))
@@ -342,6 +354,21 @@ function App() {
             <article><span className="stat-icon blue">◷</span><div><p>Следующая выплата</p><strong>{portfolioBonds[0]?.date ?? 'Нет данных'}</strong></div></article>
           </div>
         </section>
+        {portfolioItems.length > 0 && (
+          <section className="allocation-card" aria-label="Структура портфеля">
+            <div className="allocation-head">
+              <div><p className="eyebrow">СТРУКТУРА</p><h3>Распределение портфеля</h3></div>
+              <span className={`risk-badge risk-${riskLevel.toLocaleLowerCase('ru')}`}>Риск: {riskLevel}</span>
+            </div>
+            <div className="allocation-track" aria-label={`Акции ${stockShare.toFixed(0)}%, облигации ${(100 - stockShare).toFixed(0)}%`}>
+              <span style={{ width: `${stockShare}%` }} />
+            </div>
+            <div className="allocation-legend">
+              <span><i className="stocks-dot" />Акции <strong>{stockShare.toFixed(0)}%</strong></span>
+              <span><i className="bonds-dot" />Облигации <strong>{(100 - stockShare).toFixed(0)}%</strong></span>
+            </div>
+          </section>
+        )}
 
       <section className="portfolio-section">
         <div className="section-heading">
@@ -426,6 +453,15 @@ function App() {
               </button>
             ))}
           </div>
+          <label className="market-sort">
+            <span>Сортировка</span>
+            <select value={marketSort} onChange={(event) => setMarketSort(event.target.value as typeof marketSort)}>
+              <option value="name">По названию</option>
+              <option value="growth">Лидеры роста</option>
+              <option value="decline">Лидеры падения</option>
+              <option value="price">По цене</option>
+            </select>
+          </label>
           <p className="catalog-count">
             {marketStatus === 'loading' ? 'Загружаем каталог…' : `Найдено: ${filteredInstruments.length}`}
           </p>
