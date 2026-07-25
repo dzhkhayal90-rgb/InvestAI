@@ -88,6 +88,17 @@ type MarketNews = {
 
 type Currency = 'RUB' | 'USD' | 'EUR'
 type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news'
+type DetailTab = 'overview' | 'events' | 'income' | 'operations'
+
+const companyDomains: Record<string, string> = {
+  SBER: 'sberbank.com', GAZP: 'gazprom.ru', LKOH: 'lukoil.ru', ROSN: 'rosneft.ru',
+  NVTK: 'novatek.ru', GMKN: 'nornickel.ru', YDEX: 'yandex.ru', YNDX: 'yandex.ru',
+  OZON: 'ozon.ru', VKCO: 'vk.company', MOEX: 'moex.com', AFLT: 'aeroflot.ru',
+  MGNT: 'magnit.com', T: 'tbank.ru', TCSG: 'tbank.ru', X5: 'x5.ru',
+  PLZL: 'polyus.com', MTS: 'mts.ru', MTSS: 'mts.ru', IRAO: 'irao-generation.ru',
+  CHMF: 'severstal.com', NLMK: 'nlmk.com', MAGN: 'mmk.ru', RUAL: 'rusal.ru',
+  PHOR: 'phosagro.ru', TATN: 'tatneft.ru', TRNFP: 'transneft.ru',
+}
 
 const lessons = [
   { title: 'Как собрать первый портфель', time: '3 минуты', text: 'Начните с цели и срока. Для умеренного портфеля можно сочетать акции крупных компаний и облигации. Не вкладывайте все деньги в одну бумагу и сохраняйте финансовую подушку отдельно.' },
@@ -246,6 +257,7 @@ function App() {
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null)
   const [editingPosition, setEditingPosition] = useState(false)
   const [detailInstrument, setDetailInstrument] = useState<Instrument | null>(null)
+  const [detailTab, setDetailTab] = useState<DetailTab>('overview')
   const [quantity, setQuantity] = useState('1')
   const [buyPrice, setBuyPrice] = useState('')
   const [showAdvice, setShowAdvice] = useState(false)
@@ -751,6 +763,20 @@ function App() {
   const instrumentDescription = (instrument: Instrument) => instrument.kind === 'Акция'
     ? `${instrument.name} — акция российского эмитента, обращающаяся на Московской бирже. Цена зависит от результатов компании, дивидендной политики, отраслевых событий и общего состояния рынка.`
     : `${instrument.name} — ${instrument.category === 'ОФЗ' ? 'государственная облигация Российской Федерации' : 'корпоративная облигация'}. Инвестор получает купонные выплаты и номинал при погашении, принимая процентный и кредитный риск.`
+  const instrumentLogo = (instrument: Instrument) => companyDomains[instrument.ticker]
+    ? `https://www.google.com/s2/favicons?domain=${companyDomains[instrument.ticker]}&sz=128`
+    : undefined
+  const instrumentMark = (instrument: Instrument) => instrument.category === 'ОФЗ'
+    ? '₽'
+    : instrument.kind === 'Облигация'
+      ? instrument.name.replace(/[^А-ЯA-Z]/g, '').slice(0, 2) || 'ОБ'
+      : instrument.ticker.slice(0, 2)
+  const logoFor = (instrument: Instrument) => (
+    <span className={`instrument-logo ${instrument.kind === 'Облигация' ? 'bond-logo' : ''}`}>
+      <span>{instrumentMark(instrument)}</span>
+      {instrumentLogo(instrument) && <img src={instrumentLogo(instrument)} alt="" onError={(event) => { event.currentTarget.style.display = 'none' }} />}
+    </span>
+  )
   const newsImpact = (title: string) => {
     const value = title.toLocaleLowerCase('ru')
     if (/ставк|инфляц|банк росс|валют|рубл/.test(value)) return { label: 'Весь рынок', level: 'high', text: 'Может повлиять на ставки, рубль и оценку большинства активов.' }
@@ -768,6 +794,10 @@ function App() {
   useEffect(() => {
     setVisibleCount(20)
   }, [favoritesOnly, marketFilter, marketQuery])
+
+  useEffect(() => {
+    setDetailTab('overview')
+  }, [detailInstrument?.ticker])
 
   const submitHomeSearch = () => {
     const query = homeSearch.trim()
@@ -903,7 +933,7 @@ function App() {
           <div className="portfolio-list">
             {portfolioItems.map((instrument) => (
               <article className="portfolio-row" key={instrument.ticker}>
-                <span className="instrument-badge">{instrument.kind === 'Акция' ? 'A' : 'О'}</span>
+                {logoFor(instrument)}
                 <button className="portfolio-main" type="button" onClick={() => setDetailInstrument(instrument)}><strong>{instrument.ticker}</strong><p>{portfolio[instrument.ticker].quantity} шт. · средняя {formatMoney(portfolio[instrument.ticker].buyPrice, 2)}</p></button>
                 <div className="position-result">
                   <strong>{formatMoney(portfolio[instrument.ticker].quantity * instrument.valuePrice)}</strong>
@@ -1009,6 +1039,7 @@ function App() {
         <div className="market-list">
           {filteredInstruments.slice(0, visibleCount).map((instrument) => (
             <article className="market-row" key={instrument.ticker}>
+              {logoFor(instrument)}
               <button className="market-main instrument-open" type="button" onClick={() => setDetailInstrument(instrument)}><strong>{instrument.ticker}</strong><p>{instrument.name} · {instrument.category}</p></button>
               <div className="market-price"><strong>{formatPrice(instrument)}</strong>{instrument.change !== undefined ? <span className={instrument.change >= 0 ? 'up' : 'down'}>{instrument.change >= 0 ? '+' : ''}{instrument.change}%</span> : <span>Купон {instrument.coupon}</span>}</div>
               <button
@@ -1189,7 +1220,7 @@ function App() {
           <section className="asset-modal detail-modal" onClick={(event) => event.stopPropagation()}>
             <button className="modal-close" type="button" onClick={() => setDetailInstrument(null)} aria-label="Закрыть">×</button>
             <div className="detail-title">
-              <span className="instrument-badge">{detailInstrument.kind === 'Акция' ? 'A' : 'О'}</span>
+              {logoFor(detailInstrument)}
               <div><p className="eyebrow">{detailInstrument.category}</p><h2>{detailInstrument.name}</h2></div>
             </div>
             <p className="modal-caption">{detailInstrument.ticker}{detailInstrument.isin ? ` · ISIN ${detailInstrument.isin}` : ''}</p>
@@ -1198,29 +1229,46 @@ function App() {
               <strong>{formatPrice(detailInstrument)}</strong>
               {detailInstrument.change !== undefined && <small className={detailInstrument.change >= 0 ? 'up' : 'down'}>{detailInstrument.change >= 0 ? '+' : ''}{detailInstrument.change}% за день</small>}
             </div>
-            <div className="detail-grid">
-              <div><span>Цена за бумагу</span><strong>{detailInstrument.valuePrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
-              <div><span>Лот</span><strong>{detailInstrument.lotSize ?? 1} шт.</strong></div>
-              <div><span>Уровень листинга</span><strong>{detailInstrument.listLevel ? `${detailInstrument.listLevel} уровень` : '—'}</strong></div>
-              <div><span>Изменение за день</span><strong className={(detailInstrument.change ?? 0) >= 0 ? 'up' : 'down'}>{detailInstrument.change !== undefined ? `${detailInstrument.change >= 0 ? '+' : ''}${detailInstrument.change}%` : '—'}</strong></div>
-              {detailInstrument.kind === 'Акция' && <>
-                <div><span>Последний дивиденд</span><strong>{detailInstrument.dividendValue !== undefined ? `${detailInstrument.dividendValue.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : 'Нет данных'}</strong></div>
-                <div><span>Дата закрытия реестра</span><strong>{detailInstrument.dividendDate ? new Date(detailInstrument.dividendDate).toLocaleDateString('ru-RU') : 'Нет данных'}</strong></div>
-                <div><span>Дивидендная доходность</span><strong>{detailInstrument.dividendValue && detailInstrument.valuePrice ? `${(detailInstrument.dividendValue / detailInstrument.valuePrice * 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
-              </>}
-              {detailInstrument.kind === 'Облигация' && <>
+            <div className="detail-tabs">
+              <button className={detailTab === 'overview' ? 'active' : ''} onClick={() => setDetailTab('overview')} type="button">Обзор</button>
+              <button className={detailTab === 'events' ? 'active' : ''} onClick={() => setDetailTab('events')} type="button">События</button>
+              {(detailInstrument.kind === 'Облигация' || detailInstrument.dividendValue !== undefined) && <button className={detailTab === 'income' ? 'active' : ''} onClick={() => setDetailTab('income')} type="button">{detailInstrument.kind === 'Акция' ? 'Дивиденды' : 'Купоны'}</button>}
+              <button className={detailTab === 'operations' ? 'active' : ''} onClick={() => setDetailTab('operations')} type="button">Операции</button>
+            </div>
+            {detailTab === 'overview' && <div className="detail-panel">
+              <div className="detail-grid">
+                <div><span>Цена за бумагу</span><strong>{detailInstrument.valuePrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+                <div><span>Лот</span><strong>{detailInstrument.lotSize ?? 1} шт.</strong></div>
+                <div><span>Уровень листинга</span><strong>{detailInstrument.listLevel ? `${detailInstrument.listLevel} уровень` : '—'}</strong></div>
+                <div><span>Изменение за день</span><strong className={(detailInstrument.change ?? 0) >= 0 ? 'up' : 'down'}>{detailInstrument.change !== undefined ? `${detailInstrument.change >= 0 ? '+' : ''}${detailInstrument.change}%` : '—'}</strong></div>
+              </div>
+              <div className="instrument-description"><h3>О компании</h3><p>{instrumentDescription(detailInstrument)}</p></div>
+              <div className="instrument-risks"><h3>Что влияет на цену</h3><div>{detailInstrument.kind === 'Акция' ? <><span>Отчётность компании</span><span>Дивиденды</span><span>Новости отрасли</span><span>Курс рубля</span></> : <><span>Ключевая ставка</span><span>Кредитный риск</span><span>Срок погашения</span><span>Ликвидность</span></>}</div></div>
+              <p className="detail-note">{detailInstrument.kind === 'Облигация' ? 'Цена облигации на бирже указана в процентах от номинала. Цена за бумагу учитывает НКД.' : 'Изменение рассчитано относительно предыдущей торговой сессии.'}</p>
+            </div>}
+            {detailTab === 'events' && <div className="detail-panel event-list">
+              {detailInstrument.couponDate && <article><span>Купон</span><div><strong>Ближайшая купонная выплата</strong><small>{new Date(detailInstrument.couponDate).toLocaleDateString('ru-RU')}</small></div></article>}
+              {detailInstrument.dividendDate && <article><span>DIV</span><div><strong>Закрытие реестра акционеров</strong><small>{new Date(detailInstrument.dividendDate).toLocaleDateString('ru-RU')}</small></div></article>}
+              {detailInstrument.maturityDate && <article><span>₽</span><div><strong>Погашение облигации</strong><small>{new Date(detailInstrument.maturityDate).toLocaleDateString('ru-RU')}</small></div></article>}
+              {marketNews.filter((item) => item.title.toLocaleLowerCase('ru').includes(detailInstrument.name.split(' ')[0].toLocaleLowerCase('ru')) || item.title.includes(detailInstrument.ticker)).slice(0, 3).map((item) => <article key={item.id}><span>NEWS</span><div><strong>{item.title}</strong><small>{new Date(item.publishedAt).toLocaleDateString('ru-RU')}</small></div></article>)}
+              {!detailInstrument.couponDate && !detailInstrument.dividendDate && !detailInstrument.maturityDate && <div className="detail-empty"><span>◷</span><strong>Нет подтверждённых ближайших событий</strong><small>Добавим их, когда MOEX опубликует данные.</small></div>}
+            </div>}
+            {detailTab === 'income' && <div className="detail-panel income-summary">
+              {detailInstrument.kind === 'Акция' ? <>
+                <div><span>Дивиденд на акцию</span><strong>{detailInstrument.dividendValue?.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+                <div><span>Дата закрытия реестра</span><strong>{detailInstrument.dividendDate ? new Date(detailInstrument.dividendDate).toLocaleDateString('ru-RU') : 'Ожидается'}</strong></div>
+                <div><span>Доходность выплаты</span><strong>{detailInstrument.dividendValue && detailInstrument.valuePrice ? `${(detailInstrument.dividendValue / detailInstrument.valuePrice * 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
+              </> : <>
                 <div><span>Купон</span><strong>{detailInstrument.coupon ?? '—'}</strong></div>
                 <div><span>Ставка купона</span><strong>{detailInstrument.couponPercent !== undefined ? `${detailInstrument.couponPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
                 <div><span>Доходность MOEX</span><strong>{detailInstrument.yieldValue !== undefined ? `${detailInstrument.yieldValue.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
                 <div><span>Следующий купон</span><strong>{detailInstrument.date ?? '—'}</strong></div>
-                <div><span>Номинал</span><strong>{detailInstrument.faceValue?.toLocaleString('ru-RU') ?? '—'} ₽</strong></div>
-                <div><span>НКД</span><strong>{detailInstrument.accruedInterest?.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) ?? '—'} ₽</strong></div>
                 <div><span>Погашение</span><strong>{detailInstrument.maturityDate ? new Date(detailInstrument.maturityDate).toLocaleDateString('ru-RU') : '—'}</strong></div>
               </>}
-            </div>
-            <div className="instrument-description"><h3>Об инструменте</h3><p>{instrumentDescription(detailInstrument)}</p></div>
-            <div className="instrument-risks"><h3>Что влияет на цену</h3><div>{detailInstrument.kind === 'Акция' ? <><span>Отчётность компании</span><span>Дивиденды</span><span>Новости отрасли</span><span>Курс рубля</span></> : <><span>Ключевая ставка</span><span>Кредитный риск</span><span>Срок погашения</span><span>Ликвидность</span></>}</div></div>
-            <p className="detail-note">{detailInstrument.kind === 'Облигация' ? 'Цена облигации на бирже указана в процентах от номинала. Цена за бумагу учитывает НКД.' : 'Изменение рассчитано относительно предыдущей торговой сессии.'}</p>
+            </div>}
+            {detailTab === 'operations' && <div className="detail-panel instrument-operations">
+              {operations.filter((item) => item.ticker === detailInstrument.ticker).length ? operations.filter((item) => item.ticker === detailInstrument.ticker).map((item) => <article key={item.id}><span>{item.type === 'Покупка' ? '+' : item.type === 'Удаление' ? '−' : '↻'}</span><div><strong>{item.type}</strong><small>{new Date(item.date).toLocaleString('ru-RU')}</small></div><div><strong>{item.quantity} шт.</strong><small>{item.price.toLocaleString('ru-RU')} ₽</small></div></article>) : <div className="detail-empty"><span>⇄</span><strong>Операций пока нет</strong><small>История появится после добавления бумаги в портфель.</small></div>}
+            </div>}
             {detailInstrument.kind === 'Облигация' && <button className="calculator-button" type="button" onClick={() => {
               setBondCalculator(detailInstrument)
               setCalculatorQuantity(String(portfolio[detailInstrument.ticker]?.quantity ?? 1))
