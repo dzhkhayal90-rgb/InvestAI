@@ -50,6 +50,12 @@ type Position = {
 type Currency = 'RUB' | 'USD' | 'EUR'
 type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai'
 
+const lessons = [
+  { title: 'Как собрать первый портфель', time: '3 минуты', text: 'Начните с цели и срока. Для умеренного портфеля можно сочетать акции крупных компаний и облигации. Не вкладывайте все деньги в одну бумагу и сохраняйте финансовую подушку отдельно.' },
+  { title: 'Что такое диверсификация', time: '2 минуты', text: 'Диверсификация — распределение денег между разными активами. Она снижает зависимость портфеля от одной компании или отрасли, но не исключает риск полностью.' },
+  { title: 'Как читать доходность', time: '3 минуты', text: 'Доходность показывает изменение стоимости относительно цены покупки. Результат за день отражает движение рынка сегодня, а результат за всё время — прибыль или убыток с момента покупки.' },
+]
+
 const fallbackInstruments: Instrument[] = [
   { secid: 'SBER', ticker: 'SBER', name: 'Сбербанк', kind: 'Акция', category: 'Акции', price: 310.5, valuePrice: 310.5, change: 1.24 },
   { secid: 'LKOH', ticker: 'LKOH', name: 'Лукойл', kind: 'Акция', category: 'Акции', price: 6780, valuePrice: 6780, change: -0.38 },
@@ -172,6 +178,7 @@ function App() {
   const [quantity, setQuantity] = useState('1')
   const [buyPrice, setBuyPrice] = useState('')
   const [showAdvice, setShowAdvice] = useState(false)
+  const [selectedLesson, setSelectedLesson] = useState<(typeof lessons)[number] | null>(null)
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
   const favoriteItems = instruments.filter((instrument) => favorites.includes(instrument.ticker))
@@ -593,13 +600,30 @@ function App() {
         })}
       </section>
 
-      <section className="ai-card" id="ai">
-        <span className="ai-orb">✦</span>
-        <div>
-          <p className="eyebrow">AI-ПОМОЩНИК</p>
-          <h2>Помогу разобраться с портфелем</h2>
+      <section className="ai-section" id="ai">
+        <div className="ai-card">
+          <span className="ai-orb">✦</span>
+          <div>
+            <p className="eyebrow">AI-ПОМОЩНИК</p>
+            <h2>Разбор вашего портфеля</h2>
+            <p className="ai-card-copy">{portfolioItems.length ? advice : 'Добавьте активы — я оценю структуру, риск и концентрацию портфеля.'}</p>
+          </div>
+          <button onClick={() => setShowAdvice(true)} aria-label="Открыть AI-помощника">→</button>
         </div>
-        <button onClick={() => setShowAdvice(true)} aria-label="Открыть AI-помощника">→</button>
+        <div className="ai-insights">
+          <article><span>◉</span><div><small>Уровень риска</small><strong>{portfolioItems.length ? riskLevel : 'Нет данных'}</strong></div></article>
+          <article><span>◎</span><div><small>Диверсификация</small><strong>{portfolioItems.length ? `${diversificationScore}/100` : 'Добавьте активы'}</strong></div></article>
+        </div>
+        <div className="section-heading ai-lessons-head"><div><p className="eyebrow">БАЗА ЗНАНИЙ</p><h2>Короткие уроки</h2></div></div>
+        <div className="lesson-list">
+          {lessons.map((lesson, index) => (
+            <button type="button" onClick={() => setSelectedLesson(lesson)} key={lesson.title}>
+              <span>{index + 1}</span>
+              <div><strong>{lesson.title}</strong><small>{lesson.time}</small></div>
+              <i>›</i>
+            </button>
+          ))}
+        </div>
       </section>
 
       </main>
@@ -679,6 +703,20 @@ function App() {
             </div>
             <p className="advice-disclaimer">Демонстрационный анализ, не инвестиционная рекомендация.</p>
             <button className="modal-submit" type="button" onClick={() => setShowAdvice(false)}>Понятно</button>
+          </section>
+        </div>
+      )}
+
+      {selectedLesson && (
+        <div className="modal-backdrop" onClick={() => setSelectedLesson(null)}>
+          <section className="asset-modal lesson-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setSelectedLesson(null)} aria-label="Закрыть">×</button>
+            <span className="advice-orb">◉</span>
+            <p className="eyebrow">УРОК · {selectedLesson.time}</p>
+            <h2>{selectedLesson.title}</h2>
+            <p className="advice-text">{selectedLesson.text}</p>
+            <p className="advice-disclaimer">Материал носит образовательный характер и не является инвестиционной рекомендацией.</p>
+            <button className="modal-submit" type="button" onClick={() => setSelectedLesson(null)}>Понятно</button>
           </section>
         </div>
       )}
