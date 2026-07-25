@@ -461,14 +461,19 @@ function App() {
             {portfolioItems.map((instrument) => (
               <article className="portfolio-row" key={instrument.ticker}>
                 <span className="instrument-badge">{instrument.kind === 'Акция' ? 'A' : 'О'}</span>
-                <button className="portfolio-main" type="button" onClick={() => setDetailInstrument(instrument)}><strong>{instrument.ticker}</strong><p>{portfolio[instrument.ticker].quantity} шт. · средняя {portfolio[instrument.ticker].buyPrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</p></button>
+                <button className="portfolio-main" type="button" onClick={() => setDetailInstrument(instrument)}><strong>{instrument.ticker}</strong><p>{portfolio[instrument.ticker].quantity} шт. · средняя {formatMoney(portfolio[instrument.ticker].buyPrice, 2)}</p></button>
                 <div className="position-result">
-                  <strong>{(portfolio[instrument.ticker].quantity * instrument.valuePrice).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
+                  <strong>{formatMoney(portfolio[instrument.ticker].quantity * instrument.valuePrice)}</strong>
                   {(() => {
                     const position = portfolio[instrument.ticker]
-                    const positionProfit = (instrument.valuePrice - position.buyPrice) * position.quantity
-                    const positionPercent = position.buyPrice ? (instrument.valuePrice - position.buyPrice) / position.buyPrice * 100 : 0
-                    return <small className={positionProfit >= 0 ? 'up' : 'down'}>{positionProfit >= 0 ? '+' : ''}{positionProfit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽ · {positionPercent >= 0 ? '+' : ''}{positionPercent.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%</small>
+                    const allProfit = (instrument.valuePrice - position.buyPrice) * position.quantity
+                    const allPercent = position.buyPrice ? (instrument.valuePrice - position.buyPrice) / position.buyPrice * 100 : 0
+                    const currentValue = instrument.valuePrice * position.quantity
+                    const dailyChange = instrument.change ?? 0
+                    const previousValue = dailyChange > -100 ? currentValue / (1 + dailyChange / 100) : currentValue
+                    const positionProfit = resultPeriod === 'today' ? currentValue - previousValue : allProfit
+                    const positionPercent = resultPeriod === 'today' ? dailyChange : allPercent
+                    return <small className={positionProfit >= 0 ? 'up' : 'down'}>{resultPeriod === 'today' ? 'Сегодня ' : ''}{positionProfit >= 0 ? '+' : ''}{formatMoney(positionProfit, 2)} · {positionPercent >= 0 ? '+' : ''}{positionPercent.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%</small>
                   })()}
                 </div>
                 <button className="remove-button" onClick={() => setPortfolio((current) => {
