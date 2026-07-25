@@ -44,6 +44,11 @@ type Instrument = {
   lotSize?: number
   isin?: string
   priceUnit?: '₽' | '%'
+  dividendValue?: number
+  dividendDate?: string
+  couponPercent?: number
+  yieldValue?: number
+  listLevel?: number
 }
 
 type Position = {
@@ -75,8 +80,14 @@ type CashFlow = {
   note?: string
 }
 
+type MarketNews = {
+  id: number
+  title: string
+  publishedAt: string
+}
+
 type Currency = 'RUB' | 'USD' | 'EUR'
-type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics'
+type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news'
 
 const lessons = [
   { title: 'Как собрать первый портфель', time: '3 минуты', text: 'Начните с цели и срока. Для умеренного портфеля можно сочетать акции крупных компаний и облигации. Не вкладывайте все деньги в одну бумагу и сохраняйте финансовую подушку отдельно.' },
@@ -114,7 +125,7 @@ const loadBoard = async (
   category: Instrument['category'],
 ) => {
   const base = 'https://iss.moex.com/iss/engines/stock/markets'
-  const query = 'iss.meta=off&iss.only=securities,marketdata,securities.cursor&securities.columns=SECID,SHORTNAME,COUPONVALUE,NEXTCOUPON,FACEVALUE,ACCRUEDINT,MATDATE,LOTSIZE,ISIN&marketdata.columns=SECID,LAST,MARKETPRICE,LASTTOPREVPRICE'
+  const query = 'iss.meta=off&iss.only=securities,marketdata,securities.cursor&securities.columns=SECID,SHORTNAME,COUPONVALUE,NEXTCOUPON,FACEVALUE,ACCRUEDINT,MATDATE,LOTSIZE,ISIN,DIVIDENDVALUE,DIVIDENDDATE,COUPONPERCENT,LISTLEVEL&marketdata.columns=SECID,LAST,MARKETPRICE,LASTTOPREVPRICE,YIELD'
   const requestPage = async (start: number) => {
     const response = await fetch(`${base}/${market}/boards/${board}/securities.json?${query}&start=${start}`)
     if (!response.ok) throw new Error('MOEX is unavailable')
@@ -166,6 +177,11 @@ const loadBoard = async (
       lotSize: Number.isFinite(Number(row.LOTSIZE)) ? Number(row.LOTSIZE) : undefined,
       isin: typeof row.ISIN === 'string' ? row.ISIN : undefined,
       priceUnit: isBond ? '%' : '₽',
+      dividendValue: Number.isFinite(Number(row.DIVIDENDVALUE)) ? Number(row.DIVIDENDVALUE) : undefined,
+      dividendDate: typeof row.DIVIDENDDATE === 'string' ? row.DIVIDENDDATE : undefined,
+      couponPercent: Number.isFinite(Number(row.COUPONPERCENT)) ? Number(row.COUPONPERCENT) : undefined,
+      yieldValue: Number.isFinite(Number(row.YIELD)) ? Number(row.YIELD) : undefined,
+      listLevel: Number.isFinite(Number(row.LISTLEVEL)) ? Number(row.LISTLEVEL) : undefined,
     }
   })
 }
@@ -179,12 +195,25 @@ const loadMoexMarket = async () => {
   return groups.flat().filter((instrument) => instrument.price > 0)
 }
 
+const loadMoexNews = async () => {
+  const response = await fetch('https://iss.moex.com/iss/sitenews.json?iss.meta=off&iss.only=sitenews&sitenews.columns=id,title,published_at')
+  if (!response.ok) throw new Error('MOEX news unavailable')
+  const payload = await response.json() as { sitenews?: IssBlock }
+  return blockRows(payload.sitenews).slice(0, 20).map((item): MarketNews => ({
+    id: Number(item.id),
+    title: String(item.title ?? 'Новость Московской биржи'),
+    publishedAt: String(item.published_at ?? new Date().toISOString()),
+  }))
+}
+
 function App() {
   const [name, setName] = useState('инвестор')
   const [isTelegram, setIsTelegram] = useState(false)
   const [instruments, setInstruments] = useState(fallbackInstruments)
   const [marketStatus, setMarketStatus] = useState<'loading' | 'live' | 'error'>('loading')
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
+  const [marketNews, setMarketNews] = useState<MarketNews[]>([])
+  const [newsStatus, setNewsStatus] = useState<'loading' | 'live' | 'error'>('loading')
   const [marketQuery, setMarketQuery] = useState('')
   const [homeSearch, setHomeSearch] = useState('')
   const [marketFilter, setMarketFilter] = useState<'Все' | Instrument['category']>('Все')
@@ -697,8 +726,38 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    let active = true
+    const refreshNews = async () => {
+      try {
+        const news = await loadMoexNews()
+        if (!active) return
+        setMarketNews(news)
+        setNewsStatus('live')
+      } catch {
+        if (active) setNewsStatus('error')
+      }
+    }
+    void refreshNews()
+    const timer = window.setInterval(refreshNews, 15 * 60_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
   const formatPrice = (instrument: Instrument) =>
     `${instrument.price.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ${instrument.priceUnit ?? '₽'}`
+  const instrumentDescription = (instrument: Instrument) => instrument.kind === 'Акция'
+    ? `${instrument.name} — акция российского эмитента, обращающаяся на Московской бирже. Цена зависит от результатов компании, дивидендной политики, отраслевых событий и общего состояния рынка.`
+    : `${instrument.name} — ${instrument.category === 'ОФЗ' ? 'государственная облигация Российской Федерации' : 'корпоративная облигация'}. Инвестор получает купонные выплаты и номинал при погашении, принимая процентный и кредитный риск.`
+  const newsImpact = (title: string) => {
+    const value = title.toLocaleLowerCase('ru')
+    if (/ставк|инфляц|банк росс|валют|рубл/.test(value)) return { label: 'Весь рынок', level: 'high', text: 'Может повлиять на ставки, рубль и оценку большинства активов.' }
+    if (/облигац|офз|купон|долг|заимств/.test(value)) return { label: 'Облигации', level: 'bond', text: 'Может изменить доходности и цены долговых бумаг.' }
+    if (/дивиденд|акци|эмитент|компан|отчет/.test(value)) return { label: 'Акции', level: 'share', text: 'Может повысить волатильность отдельных акций или отрасли.' }
+    return { label: 'Рынок', level: 'normal', text: 'Важное событие инфраструктуры или торгов Московской биржи.' }
+  }
   const formatMoney = (rubles: number, maximumFractionDigits = currency === 'RUB' ? 0 : 2) =>
     new Intl.NumberFormat('ru-RU', {
       style: 'currency',
@@ -1025,6 +1084,21 @@ function App() {
         </article>
       </section>
 
+      <section className="news-section" id="news">
+        <div className="section-heading"><div><p className="eyebrow">МОСКОВСКАЯ БИРЖА</p><h2>Новости рынка</h2></div><span className={`news-live ${newsStatus}`}>{newsStatus === 'loading' ? 'Загрузка' : newsStatus === 'live' ? 'Обновляется' : 'Нет связи'}</span></div>
+        <p className="news-intro">События, которые могут влиять на стоимость акций, облигаций, валюту и общую волатильность рынка.</p>
+        {marketNews.length ? <div className="news-list">{marketNews.map((item) => {
+          const impact = newsImpact(item.title)
+          return <a href={`https://www.moex.com/n${item.id}`} target="_blank" rel="noreferrer" key={item.id}>
+            <div className="news-meta"><span className={`impact-${impact.level}`}>{impact.label}</span><time>{new Date(item.publishedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</time></div>
+            <h3>{item.title}</h3>
+            <p>{impact.text}</p>
+            <small>Источник: Московская биржа ↗</small>
+          </a>
+        })}</div> : <div className="catalog-empty">{newsStatus === 'loading' ? 'Загружаем официальные новости MOEX…' : 'Новости временно недоступны. Попробуйте позднее.'}</div>}
+        <p className="news-disclaimer">Метка влияния определяется по теме новости и не является прогнозом движения цены или инвестиционной рекомендацией.</p>
+      </section>
+
       <section className="ai-section" id="ai">
         <div className="ai-card">
           <span className="ai-orb">✦</span>
@@ -1091,6 +1165,7 @@ function App() {
         <button className={activeSection === 'portfolio' ? 'active' : undefined} type="button" onClick={() => setActiveSection('portfolio')}><span>▣</span>Главная</button>
         <button className={activeSection === 'market' ? 'active' : undefined} type="button" onClick={() => setActiveSection('market')}><span>◔</span>Рынок</button>
         <button className={activeSection === 'coupons' ? 'active' : undefined} type="button" onClick={() => setActiveSection('coupons')}><span>₽</span>Купоны</button>
+        <button className={activeSection === 'news' ? 'active' : undefined} type="button" onClick={() => setActiveSection('news')}><span>◫</span>Новости</button>
         <button className={activeSection === 'ai' ? 'active' : undefined} type="button" onClick={() => setActiveSection('ai')}><span>✦</span>AI</button>
       </nav>
 
@@ -1126,20 +1201,32 @@ function App() {
             <div className="detail-grid">
               <div><span>Цена за бумагу</span><strong>{detailInstrument.valuePrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
               <div><span>Лот</span><strong>{detailInstrument.lotSize ?? 1} шт.</strong></div>
+              <div><span>Уровень листинга</span><strong>{detailInstrument.listLevel ? `${detailInstrument.listLevel} уровень` : '—'}</strong></div>
+              <div><span>Изменение за день</span><strong className={(detailInstrument.change ?? 0) >= 0 ? 'up' : 'down'}>{detailInstrument.change !== undefined ? `${detailInstrument.change >= 0 ? '+' : ''}${detailInstrument.change}%` : '—'}</strong></div>
+              {detailInstrument.kind === 'Акция' && <>
+                <div><span>Последний дивиденд</span><strong>{detailInstrument.dividendValue !== undefined ? `${detailInstrument.dividendValue.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : 'Нет данных'}</strong></div>
+                <div><span>Дата закрытия реестра</span><strong>{detailInstrument.dividendDate ? new Date(detailInstrument.dividendDate).toLocaleDateString('ru-RU') : 'Нет данных'}</strong></div>
+                <div><span>Дивидендная доходность</span><strong>{detailInstrument.dividendValue && detailInstrument.valuePrice ? `${(detailInstrument.dividendValue / detailInstrument.valuePrice * 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
+              </>}
               {detailInstrument.kind === 'Облигация' && <>
                 <div><span>Купон</span><strong>{detailInstrument.coupon ?? '—'}</strong></div>
+                <div><span>Ставка купона</span><strong>{detailInstrument.couponPercent !== undefined ? `${detailInstrument.couponPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
+                <div><span>Доходность MOEX</span><strong>{detailInstrument.yieldValue !== undefined ? `${detailInstrument.yieldValue.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
                 <div><span>Следующий купон</span><strong>{detailInstrument.date ?? '—'}</strong></div>
                 <div><span>Номинал</span><strong>{detailInstrument.faceValue?.toLocaleString('ru-RU') ?? '—'} ₽</strong></div>
                 <div><span>НКД</span><strong>{detailInstrument.accruedInterest?.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) ?? '—'} ₽</strong></div>
                 <div><span>Погашение</span><strong>{detailInstrument.maturityDate ? new Date(detailInstrument.maturityDate).toLocaleDateString('ru-RU') : '—'}</strong></div>
               </>}
             </div>
+            <div className="instrument-description"><h3>Об инструменте</h3><p>{instrumentDescription(detailInstrument)}</p></div>
+            <div className="instrument-risks"><h3>Что влияет на цену</h3><div>{detailInstrument.kind === 'Акция' ? <><span>Отчётность компании</span><span>Дивиденды</span><span>Новости отрасли</span><span>Курс рубля</span></> : <><span>Ключевая ставка</span><span>Кредитный риск</span><span>Срок погашения</span><span>Ликвидность</span></>}</div></div>
             <p className="detail-note">{detailInstrument.kind === 'Облигация' ? 'Цена облигации на бирже указана в процентах от номинала. Цена за бумагу учитывает НКД.' : 'Изменение рассчитано относительно предыдущей торговой сессии.'}</p>
             {detailInstrument.kind === 'Облигация' && <button className="calculator-button" type="button" onClick={() => {
               setBondCalculator(detailInstrument)
               setCalculatorQuantity(String(portfolio[detailInstrument.ticker]?.quantity ?? 1))
               setDetailInstrument(null)
             }}>Калькулятор облигации</button>}
+            <button className={`detail-favorite ${favorites.includes(detailInstrument.ticker) ? 'active' : ''}`} type="button" onClick={() => setFavorites((current) => current.includes(detailInstrument.ticker) ? current.filter((ticker) => ticker !== detailInstrument.ticker) : [...current, detailInstrument.ticker])}>{favorites.includes(detailInstrument.ticker) ? '★ В избранном' : '☆ Добавить в избранное'}</button>
             <button className="modal-submit" type="button" onClick={() => {
               const instrument = detailInstrument
               setDetailInstrument(null)
