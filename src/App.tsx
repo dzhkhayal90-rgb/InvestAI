@@ -401,6 +401,12 @@ function App() {
               <button className={resultPeriod === 'all' ? 'active' : undefined} type="button" onClick={() => setResultPeriod('all')}>Всё время</button>
             </div>
             <div className={displayedProfit >= 0 ? 'yield-chip' : 'yield-chip negative'}>{portfolioItems.length ? `${displayedProfit >= 0 ? '+' : ''}${formatMoney(displayedProfit, 2)} · ${displayedProfitPercent >= 0 ? '+' : ''}${displayedProfitPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : 'Портфель ещё не заполнен'}</div>
+            {portfolioItems.length > 0 && (
+              <div className="portfolio-meta">
+                <span><small>Вложено</small><strong>{formatMoney(investedValue)}</strong></span>
+                <span><small>Активов</small><strong>{portfolioItems.length}</strong></span>
+              </div>
+            )}
             <a className="primary-button" href="#market">＋ Добавить актив</a>
           </article>
           <div className="quick-stats">
@@ -444,7 +450,15 @@ function App() {
               <article className="portfolio-row" key={instrument.ticker}>
                 <span className="instrument-badge">{instrument.kind === 'Акция' ? 'A' : 'О'}</span>
                 <button className="portfolio-main" type="button" onClick={() => setDetailInstrument(instrument)}><strong>{instrument.ticker}</strong><p>{portfolio[instrument.ticker].quantity} шт. · средняя {portfolio[instrument.ticker].buyPrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</p></button>
-                <strong>{(portfolio[instrument.ticker].quantity * instrument.valuePrice).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
+                <div className="position-result">
+                  <strong>{(portfolio[instrument.ticker].quantity * instrument.valuePrice).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
+                  {(() => {
+                    const position = portfolio[instrument.ticker]
+                    const positionProfit = (instrument.valuePrice - position.buyPrice) * position.quantity
+                    const positionPercent = position.buyPrice ? (instrument.valuePrice - position.buyPrice) / position.buyPrice * 100 : 0
+                    return <small className={positionProfit >= 0 ? 'up' : 'down'}>{positionProfit >= 0 ? '+' : ''}{positionProfit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽ · {positionPercent >= 0 ? '+' : ''}{positionPercent.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%</small>
+                  })()}
+                </div>
                 <button className="remove-button" onClick={() => setPortfolio((current) => {
                   const next = { ...current }
                   delete next[instrument.ticker]
