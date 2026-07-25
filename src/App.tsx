@@ -226,6 +226,7 @@ function App() {
   const [cashFlowAmount, setCashFlowAmount] = useState('')
   const [cashFlowTicker, setCashFlowTicker] = useState('')
   const [cashFlowDate, setCashFlowDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [paymentFilter, setPaymentFilter] = useState<'Все' | 'Купоны' | 'Дивиденды'>('Все')
   const [bondCalculator, setBondCalculator] = useState<Instrument | null>(null)
   const [calculatorQuantity, setCalculatorQuantity] = useState('1')
   const [showGoal, setShowGoal] = useState(false)
@@ -368,6 +369,12 @@ function App() {
     groups[key] = [...(groups[key] ?? []), payment]
     return groups
   }, {}))
+  const filteredPaymentMonths = paymentMonths
+    .map(([month, payments]) => [
+      month,
+      payments.filter((payment) => paymentFilter === 'Все' || (paymentFilter === 'Купоны' ? payment.type === 'Купон' : payment.type === 'Дивиденд')),
+    ] as const)
+    .filter(([, payments]) => payments.length > 0)
   const monthlyGoalContribution = investmentGoal
     ? Math.max(0, investmentGoal - portfolioValue) / Math.max(1, goalMonths)
     : 0
@@ -968,13 +975,17 @@ function App() {
       </section>
 
       <section className="coupon-section" id="coupons">
-        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>{portfolioBonds.length || dividends ? 'Ваши выплаты' : 'Ближайшие купоны MOEX'}</h2></div><button className="text-button" type="button" onClick={() => { setCashFlowType('Дивиденд'); setShowCashFlow(true) }}>＋ Дивиденд</button></div>
-        {paymentMonths.length > 0 && <div className="payment-calendar">
-          {paymentMonths.map(([month, payments]) => <article key={month}>
+        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>{portfolioBonds.length || dividends ? 'Купоны и дивиденды' : 'Ближайшие купоны MOEX'}</h2></div></div>
+        {(paymentMonths.length > 0 || dividends > 0) && <div className="payment-filters" role="group" aria-label="Тип выплаты">
+          {(['Все', 'Купоны', 'Дивиденды'] as const).map((filter) => <button className={paymentFilter === filter ? 'active' : ''} type="button" onClick={() => setPaymentFilter(filter)} key={filter}>{filter}</button>)}
+        </div>}
+        {filteredPaymentMonths.length > 0 && <div className="payment-calendar">
+          {filteredPaymentMonths.map(([month, payments]) => <article key={month}>
             <div className="payment-month"><div><strong>{new Date(`${month}-01T12:00:00`).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</strong><small>{payments.length} выплат</small></div><strong>{payments.reduce((sum, payment) => sum + payment.amount, 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
             {payments.map((payment) => <div className="payment-event" key={payment.id}><span className={payment.type === 'Дивиденд' ? 'dividend-event' : ''}>{payment.type === 'Дивиденд' ? 'D' : '₽'}</span><div><strong>{payment.title}</strong><small>{payment.type} · {new Date(payment.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</small></div><strong>{payment.amount.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>)}
           </article>)}
         </div>}
+        {paymentMonths.length > 0 && filteredPaymentMonths.length === 0 && <div className="catalog-empty">Выплат этого типа пока нет.</div>}
         {portfolioBonds.length > 0 && <p className="calendar-hint schedule-note">Будущие купоны рассчитаны ориентировочно с интервалом 6 месяцев до погашения. Фактический график эмитента может отличаться.</p>}
         {!portfolioBonds.length && <p className="calendar-hint">Добавьте облигацию в портфель — сумма выплаты рассчитается с учётом количества.</p>}
         {paymentMonths.length === 0 && calendarBonds.map((bond) => {
