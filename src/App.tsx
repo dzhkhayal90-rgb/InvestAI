@@ -47,6 +47,8 @@ type Position = {
   buyPrice: number
 }
 
+type Currency = 'RUB' | 'USD' | 'EUR'
+
 const fallbackInstruments: Instrument[] = [
   { secid: 'SBER', ticker: 'SBER', name: 'Сбербанк', kind: 'Акция', category: 'Акции', price: 310.5, valuePrice: 310.5, change: 1.24 },
   { secid: 'LKOH', ticker: 'LKOH', name: 'Лукойл', kind: 'Акция', category: 'Акции', price: 6780, valuePrice: 6780, change: -0.38 },
@@ -143,6 +145,9 @@ function App() {
   const [marketFilter, setMarketFilter] = useState<'Все' | Instrument['category']>('Все')
   const [marketSort, setMarketSort] = useState<'name' | 'growth' | 'decline' | 'price'>('name')
   const [visibleCount, setVisibleCount] = useState(20)
+  const [resultPeriod, setResultPeriod] = useState<'today' | 'all'>('today')
+  const [currency, setCurrency] = useState<Currency>(() => (localStorage.getItem('investai-currency') as Currency | null) ?? 'RUB')
+  const [currencyRates, setCurrencyRates] = useState<Record<Currency, number>>({ RUB: 1, USD: 90, EUR: 98 })
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
     const saved = localStorage.getItem('investai-portfolio')
     if (!saved) return {}
@@ -191,6 +196,16 @@ function App() {
   )
   const profit = portfolioValue - investedValue
   const profitPercent = investedValue ? profit / investedValue * 100 : 0
+  const todayProfit = portfolioItems.reduce((sum, instrument) => {
+    const currentValue = instrument.valuePrice * portfolio[instrument.ticker].quantity
+    const change = instrument.change ?? 0
+    const previousValue = change > -100 ? currentValue / (1 + change / 100) : currentValue
+    return sum + currentValue - previousValue
+  }, 0)
+  const todayBaseValue = portfolioValue - todayProfit
+  const todayProfitPercent = todayBaseValue ? todayProfit / todayBaseValue * 100 : 0
+  const displayedProfit = resultPeriod === 'today' ? todayProfit : profit
+  const displayedProfitPercent = resultPeriod === 'today' ? todayProfitPercent : profitPercent
   const stockShare = portfolioValue
     ? portfolioItems.filter((item) => item.kind === 'Акция').reduce((sum, item) => sum + item.valuePrice * portfolio[item.ticker].quantity, 0) / portfolioValue * 100
     : 0
@@ -263,6 +278,26 @@ function App() {
   }, [favorites])
 
   useEffect(() => {
+    localStorage.setItem('investai-currency', currency)
+  }, [currency])
+
+  useEffect(() => {
+    const loadCurrencyRates = async () => {
+      try {
+        const response = await fetch('https://www.cbr-xml-daily.ru/daily_json.js')
+        if (!response.ok) return
+        const data = await response.json() as { Valute?: { USD?: { Value?: number }; EUR?: { Value?: number } } }
+        const usd = Number(data.Valute?.USD?.Value)
+        const eur = Number(data.Valute?.EUR?.Value)
+        if (usd > 0 && eur > 0) setCurrencyRates({ RUB: 1, USD: usd, EUR: eur })
+      } catch {
+        // Оставляем резервные курсы, если сервис ЦБ временно недоступен.
+      }
+    }
+    void loadCurrencyRates()
+  }, [])
+
+  useEffect(() => {
     const webApp = window.Telegram?.WebApp
     if (!webApp) return
     webApp.ready()
@@ -294,6 +329,12 @@ function App() {
 
   const formatPrice = (instrument: Instrument) =>
     `${instrument.price.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ${instrument.priceUnit ?? '₽'}`
+  const formatMoney = (rubles: number, maximumFractionDigits = currency === 'RUB' ? 0 : 2) =>
+    new Intl.NumberFormat('ru-RU', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits,
+    }).format(rubles / currencyRates[currency])
 
   useEffect(() => {
     setVisibleCount(20)
@@ -344,9 +385,22 @@ function App() {
 
         <section className="summary-grid" aria-label="Сводка портфеля">
           <article className="hero-card">
-            <p className="card-label">Общая стоимость</p>
-            <strong className="portfolio-value">{portfolioValue.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
-            <div className={profit >= 0 ? 'yield-chip' : 'yield-chip negative'}>{portfolioItems.length ? `${profit >= 0 ? '+' : ''}${profit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽ · ${profitPercent >= 0 ? '+' : ''}${profitPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : 'Портфель ещё не заполнен'}</div>
+            <div className="value-card-head">
+              <p className="card-label">Общая стоимость</p>
+              <div className="currency-switch" role="group" aria-label="Валюта портфеля">
+                {(['RUB', 'USD', 'EUR'] as Currency[]).map((item) => (
+                  <button className={currency === item ? 'active' : undefined} type="button" onClick={() => setCurrency(item)} key={item}>
+                    {item === 'RUB' ? '₽' : item === 'USD' ? '$' : '€'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <strong className="portfolio-value">{formatMoney(portfolioValue)}</strong>
+            <div className="period-switch" role="group" aria-label="Период результата">
+              <button className={resultPeriod === 'today' ? 'active' : undefined} type="button" onClick={() => setResultPeriod('today')}>Сегодня</button>
+              <button className={resultPeriod === 'all' ? 'active' : undefined} type="button" onClick={() => setResultPeriod('all')}>Всё время</button>
+            </div>
+            <div className={displayedProfit >= 0 ? 'yield-chip' : 'yield-chip negative'}>{portfolioItems.length ? `${displayedProfit >= 0 ? '+' : ''}${formatMoney(displayedProfit, 2)} · ${displayedProfitPercent >= 0 ? '+' : ''}${displayedProfitPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : 'Портфель ещё не заполнен'}</div>
             <a className="primary-button" href="#market">＋ Добавить актив</a>
           </article>
           <div className="quick-stats">
