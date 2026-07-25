@@ -198,6 +198,9 @@ function App() {
   const [buyPrice, setBuyPrice] = useState('')
   const [showAdvice, setShowAdvice] = useState(false)
   const [showOperations, setShowOperations] = useState(false)
+  const [showGoal, setShowGoal] = useState(false)
+  const [goalInput, setGoalInput] = useState('')
+  const [investmentGoal, setInvestmentGoal] = useState(() => Number(localStorage.getItem('investai-goal')) || 0)
   const [selectedLesson, setSelectedLesson] = useState<(typeof lessons)[number] | null>(null)
   const [operations, setOperations] = useState<Operation[]>(() => {
     const saved = localStorage.getItem('investai-operations')
@@ -344,6 +347,49 @@ function App() {
     setOperations((items) => [operation, ...items].slice(0, 100))
   }
 
+  const saveGoal = () => {
+    const value = Math.max(0, Number(goalInput) || 0)
+    setInvestmentGoal(value)
+    setShowGoal(false)
+  }
+
+  const exportPortfolio = () => {
+    const data = JSON.stringify({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      portfolio,
+      favorites,
+      operations,
+      investmentGoal,
+    }, null, 2)
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `investai-backup-${new Date().toISOString().slice(0, 10)}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importPortfolio = async (file?: File) => {
+    if (!file) return
+    try {
+      const data = JSON.parse(await file.text()) as {
+        portfolio?: Record<string, Position>
+        favorites?: string[]
+        operations?: Operation[]
+        investmentGoal?: number
+      }
+      if (data.portfolio) setPortfolio(data.portfolio)
+      if (data.favorites) setFavorites(data.favorites)
+      if (data.operations) setOperations(data.operations)
+      if (typeof data.investmentGoal === 'number') setInvestmentGoal(data.investmentGoal)
+      setNotice('Резервная копия восстановлена')
+      setShowOperations(false)
+    } catch {
+      setNotice('Не удалось прочитать резервную копию')
+    }
+  }
+
   useEffect(() => {
     localStorage.setItem('investai-portfolio', JSON.stringify(portfolio))
   }, [portfolio])
@@ -355,6 +401,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('investai-operations', JSON.stringify(operations))
   }, [operations])
+
+  useEffect(() => {
+    localStorage.setItem('investai-goal', String(investmentGoal))
+  }, [investmentGoal])
 
   useEffect(() => {
     localStorage.setItem('investai-currency', currency)
@@ -668,6 +718,13 @@ function App() {
           <article><span>◉</span><div><small>Уровень риска</small><strong>{portfolioItems.length ? riskLevel : 'Нет данных'}</strong></div></article>
           <article><span>◎</span><div><small>Диверсификация</small><strong>{portfolioItems.length ? `${diversificationScore}/100` : 'Добавьте активы'}</strong></div></article>
         </div>
+        <article className="goal-card">
+          <div className="goal-head"><div><p className="eyebrow">ВАША ЦЕЛЬ</p><h3>{investmentGoal ? formatMoney(investmentGoal) : 'Создайте финансовую цель'}</h3></div><button type="button" onClick={() => { setGoalInput(investmentGoal ? String(investmentGoal) : ''); setShowGoal(true) }}>{investmentGoal ? 'Изменить' : 'Добавить'}</button></div>
+          {investmentGoal ? <>
+            <div className="goal-track"><span style={{ width: `${Math.min(100, portfolioValue / investmentGoal * 100)}%` }} /></div>
+            <p>Накоплено {Math.min(100, portfolioValue / investmentGoal * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}% · осталось {formatMoney(Math.max(0, investmentGoal - portfolioValue))}</p>
+          </> : <p>Укажите сумму — InvestAI будет показывать прогресс вашего портфеля.</p>}
+        </article>
         <div className="section-heading ai-lessons-head"><div><p className="eyebrow">БАЗА ЗНАНИЙ</p><h2>Короткие уроки</h2></div></div>
         <div className="lesson-list">
           {lessons.map((lesson, index) => (
@@ -793,7 +850,24 @@ function App() {
                 <div><strong>{operation.quantity} шт.</strong><small>{operation.price.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</small></div>
               </article>
             ))}</div> : <div className="catalog-empty">Операций пока нет. Добавьте первый актив.</div>}
+            <div className="backup-actions">
+              <button type="button" onClick={exportPortfolio}>Скачать копию</button>
+              <label>Восстановить<input type="file" accept="application/json,.json" onChange={(event) => { void importPortfolio(event.target.files?.[0]) }} /></label>
+            </div>
           </section>
+        </div>
+      )}
+
+      {showGoal && (
+        <div className="modal-backdrop" onClick={() => setShowGoal(false)}>
+          <form className="asset-modal" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); saveGoal() }}>
+            <button className="modal-close" type="button" onClick={() => setShowGoal(false)} aria-label="Закрыть">×</button>
+            <p className="eyebrow">ФИНАНСОВАЯ ЦЕЛЬ</p>
+            <h2>К какой сумме стремимся?</h2>
+            <p className="modal-caption">Прогресс рассчитывается от текущей стоимости портфеля.</p>
+            <label>Целевая сумма, ₽<input type="number" min="0" step="1000" value={goalInput} onChange={(event) => setGoalInput(event.target.value)} placeholder="1000000" autoFocus /></label>
+            <button className="modal-submit" type="submit">Сохранить цель</button>
+          </form>
         </div>
       )}
     </div>
