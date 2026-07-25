@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
+type TelegramWebApp = {
+  ready: () => void
+  expand: () => void
+  initDataUnsafe?: { user?: { first_name?: string } }
+  themeParams?: { bg_color?: string }
+}
+
+declare global {
+  interface Window {
+    Telegram?: { WebApp?: TelegramWebApp }
+  }
+}
+
 const sections = [
   { href: '#portfolio', label: 'Портфель' },
   { href: '#market', label: 'Рынок' },
@@ -17,6 +30,11 @@ type Instrument = {
   date?: string
 }
 
+type Position = {
+  quantity: number
+  buyPrice: number
+}
+
 const instruments: Instrument[] = [
   { ticker: 'SBER', name: 'Сбербанк', kind: 'Акция', price: 310.5, change: 1.24 },
   { ticker: 'LKOH', name: 'Лукойл', kind: 'Акция', price: 6780, change: -0.38 },
@@ -25,33 +43,76 @@ const instruments: Instrument[] = [
 ]
 
 function App() {
-  const [portfolio, setPortfolio] = useState<Record<string, number>>(() => {
+  const [name, setName] = useState('инвестор')
+  const [isTelegram, setIsTelegram] = useState(false)
+  const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
     const saved = localStorage.getItem('investai-portfolio')
-    return saved ? JSON.parse(saved) : {}
+    if (!saved) return {}
+    const parsed = JSON.parse(saved) as Record<string, Position | number>
+    return Object.fromEntries(Object.entries(parsed).map(([ticker, position]) => [
+      ticker,
+      typeof position === 'number'
+        ? { quantity: position, buyPrice: instruments.find((item) => item.ticker === ticker)?.price ?? 0 }
+        : position,
+    ]))
   })
   const [notice, setNotice] = useState('Выберите бумагу из списка рынка')
+  const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null)
+  const [quantity, setQuantity] = useState('1')
+  const [buyPrice, setBuyPrice] = useState('')
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
   const portfolioValue = useMemo(
-    () => portfolioItems.reduce((sum, instrument) => sum + instrument.price * portfolio[instrument.ticker], 0),
+    () => portfolioItems.reduce((sum, instrument) => sum + instrument.price * portfolio[instrument.ticker].quantity, 0),
     [portfolio, portfolioItems],
   )
+  const investedValue = useMemo(
+    () => portfolioItems.reduce((sum, instrument) => sum + portfolio[instrument.ticker].buyPrice * portfolio[instrument.ticker].quantity, 0),
+    [portfolio, portfolioItems],
+  )
+  const profit = portfolioValue - investedValue
 
-  const addInstrument = (instrument: Instrument) => {
-    setPortfolio((current) => ({ ...current, [instrument.ticker]: (current[instrument.ticker] ?? 0) + 1 }))
-    setNotice(`${instrument.ticker} добавлен в портфель`)
+  const openAddInstrument = (instrument: Instrument) => {
+    setSelectedInstrument(instrument)
+    setQuantity('1')
+    setBuyPrice(String(instrument.price))
+  }
+
+  const addInstrument = () => {
+    if (!selectedInstrument) return
+    const amount = Math.max(1, Number(quantity) || 1)
+    const price = Math.max(0, Number(buyPrice) || selectedInstrument.price)
+    setPortfolio((current) => {
+      const existing = current[selectedInstrument.ticker]
+      const totalQuantity = (existing?.quantity ?? 0) + amount
+      const averagePrice = existing
+        ? ((existing.buyPrice * existing.quantity) + (price * amount)) / totalQuantity
+        : price
+      return { ...current, [selectedInstrument.ticker]: { quantity: totalQuantity, buyPrice: averagePrice } }
+    })
+    setNotice(`${selectedInstrument.ticker} добавлен в портфель`)
+    setSelectedInstrument(null)
   }
 
   useEffect(() => {
     localStorage.setItem('investai-portfolio', JSON.stringify(portfolio))
   }, [portfolio])
 
+  useEffect(() => {
+    const webApp = window.Telegram?.WebApp
+    if (!webApp) return
+    webApp.ready()
+    webApp.expand()
+    setName(webApp.initDataUnsafe?.user?.first_name ?? 'инвестор')
+    setIsTelegram(true)
+  }, [])
+
   return (
-    <>
+    <div className={isTelegram ? 'telegram-app' : undefined}>
       <header className="topbar">
         <a className="brand" href="#">
           <span className="brand-mark">I</span>
-          <span>InvestAI</span>
+          <span>{isTelegram ? `Привет, ${name}` : 'InvestAI'}</span>
         </a>
         <nav className="site-nav" aria-label="Навигация">
           {sections.map((section) => <a href={section.href} key={section.href}>{section.label}</a>)}
@@ -89,7 +150,7 @@ function App() {
           <article className="hero-card">
             <p className="card-label">Общая стоимость</p>
             <strong className="portfolio-value">{portfolioValue.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
-            <div className="yield-chip">{portfolioItems.length ? `${portfolioItems.length} поз. в портфеле` : 'Портфель ещё не заполнен'}</div>
+            <div className={profit >= 0 ? 'yield-chip' : 'yield-chip negative'}>{portfolioItems.length ? `${profit >= 0 ? '+' : ''}${profit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽ результат` : 'Портфель ещё не заполнен'}</div>
             <a className="primary-button" href="#market">＋ Добавить актив</a>
           </article>
           <div className="quick-stats">
@@ -117,8 +178,8 @@ function App() {
             {portfolioItems.map((instrument) => (
               <article className="portfolio-row" key={instrument.ticker}>
                 <span className="instrument-badge">{instrument.kind === 'Акция' ? 'A' : 'О'}</span>
-                <div><strong>{instrument.ticker}</strong><p>{portfolio[instrument.ticker]} шт. · {instrument.name}</p></div>
-                <strong>{(portfolio[instrument.ticker] * instrument.price).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
+                <div><strong>{instrument.ticker}</strong><p>{portfolio[instrument.ticker].quantity} шт. · средняя {portfolio[instrument.ticker].buyPrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</p></div>
+                <strong>{(portfolio[instrument.ticker].quantity * instrument.price).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
                 <button className="remove-button" onClick={() => setPortfolio((current) => {
                   const next = { ...current }
                   delete next[instrument.ticker]
@@ -140,7 +201,7 @@ function App() {
             <article className="market-row" key={instrument.ticker}>
               <div className="market-main"><strong>{instrument.ticker}</strong><p>{instrument.name} · {instrument.kind}</p></div>
               <div className="market-price"><strong>{instrument.price.toLocaleString('ru-RU')} ₽</strong>{instrument.change !== undefined ? <span className={instrument.change >= 0 ? 'up' : 'down'}>{instrument.change >= 0 ? '+' : ''}{instrument.change}%</span> : <span>Купон {instrument.coupon}</span>}</div>
-              <button className="add-button" onClick={() => addInstrument(instrument)} aria-label={`Добавить ${instrument.name}`}>＋</button>
+              <button className="add-button" onClick={() => openAddInstrument(instrument)} aria-label={`Добавить ${instrument.name}`}>＋</button>
             </article>
           ))}
         </div>
@@ -162,7 +223,22 @@ function App() {
 
       </main>
       <footer><span>InvestAI</span><p>Демонстрационный сервис. Не является инвестиционной рекомендацией.</p></footer>
-    </>
+
+      {selectedInstrument && (
+        <div className="modal-backdrop" onClick={() => setSelectedInstrument(null)}>
+          <form className="asset-modal" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); addInstrument() }}>
+            <button className="modal-close" type="button" onClick={() => setSelectedInstrument(null)} aria-label="Закрыть">×</button>
+            <p className="eyebrow">ДОБАВИТЬ В ПОРТФЕЛЬ</p>
+            <h2>{selectedInstrument.name}</h2>
+            <p className="modal-caption">{selectedInstrument.ticker} · текущая цена {selectedInstrument.price.toLocaleString('ru-RU')} ₽</p>
+            <label>Количество<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+            <label>Цена покупки, ₽<input type="number" min="0" step="0.01" value={buyPrice} onChange={(event) => setBuyPrice(event.target.value)} /></label>
+            <div className="modal-total"><span>Сумма</span><strong>{((Number(quantity) || 0) * (Number(buyPrice) || 0)).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+            <button className="modal-submit" type="submit">Добавить актив</button>
+          </form>
+        </div>
+      )}
+    </div>
   )
 }
 
