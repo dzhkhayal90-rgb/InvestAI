@@ -26,7 +26,9 @@ type Instrument = {
   ticker: string
   name: string
   kind: 'Акция' | 'Облигация'
+  category: 'Акции' | 'ОФЗ' | 'Корпоративные'
   price: number
+  valuePrice: number
   change?: number
   coupon?: string
   date?: string
@@ -39,59 +41,81 @@ type Position = {
 }
 
 const fallbackInstruments: Instrument[] = [
-  { secid: 'SBER', ticker: 'SBER', name: 'Сбербанк', kind: 'Акция', price: 310.5, change: 1.24 },
-  { secid: 'LKOH', ticker: 'LKOH', name: 'Лукойл', kind: 'Акция', price: 6780, change: -0.38 },
-  { secid: 'SU26238RMFS4', ticker: 'ОФЗ 26238', name: 'ОФЗ-ПД 26238', kind: 'Облигация', price: 64.87, coupon: '35,18 ₽', date: '—', priceUnit: '%' },
-  { secid: 'SU26240RMFS0', ticker: 'ОФЗ 26240', name: 'ОФЗ-ПД 26240', kind: 'Облигация', price: 72.1, coupon: '36,90 ₽', date: '—', priceUnit: '%' },
+  { secid: 'SBER', ticker: 'SBER', name: 'Сбербанк', kind: 'Акция', category: 'Акции', price: 310.5, valuePrice: 310.5, change: 1.24 },
+  { secid: 'LKOH', ticker: 'LKOH', name: 'Лукойл', kind: 'Акция', category: 'Акции', price: 6780, valuePrice: 6780, change: -0.38 },
+  { secid: 'SU26238RMFS4', ticker: 'SU26238RMFS4', name: 'ОФЗ-ПД 26238', kind: 'Облигация', category: 'ОФЗ', price: 64.87, valuePrice: 648.7, coupon: '35,18 ₽', date: '—', priceUnit: '%' },
+  { secid: 'SU26240RMFS0', ticker: 'SU26240RMFS0', name: 'ОФЗ-ПД 26240', kind: 'Облигация', category: 'ОФЗ', price: 72.1, valuePrice: 721, coupon: '36,90 ₽', date: '—', priceUnit: '%' },
 ]
 
 type IssBlock = { columns: string[]; data: Array<Array<string | number | null>> }
-type IssResponse = { securities?: IssBlock; marketdata?: IssBlock }
+type IssResponse = { securities?: IssBlock; marketdata?: IssBlock; 'securities.cursor'?: IssBlock }
 
 const blockRows = (block?: IssBlock) => {
   if (!block) return []
   return block.data.map((values) => Object.fromEntries(block.columns.map((column, index) => [column, values[index]])))
 }
 
-const loadMoexMarket = async () => {
+const loadBoard = async (
+  market: 'shares' | 'bonds',
+  board: 'TQBR' | 'TQOB' | 'TQCB',
+  category: Instrument['category'],
+) => {
   const base = 'https://iss.moex.com/iss/engines/stock/markets'
-  const query = 'iss.meta=off&iss.only=securities,marketdata&securities.columns=SECID,SHORTNAME,COUPONVALUE,NEXTCOUPON&marketdata.columns=SECID,LAST,MARKETPRICE,LASTTOPREVPRICE'
-  const [sharesResponse, bondsResponse] = await Promise.all([
-    fetch(`${base}/shares/boards/TQBR/securities.json?${query}`),
-    fetch(`${base}/bonds/boards/TQOB/securities.json?${query}`),
-  ])
-  if (!sharesResponse.ok || !bondsResponse.ok) throw new Error('MOEX is unavailable')
-  const payloads = await Promise.all([sharesResponse.json(), bondsResponse.json()]) as IssResponse[]
-  const rows = payloads.flatMap((payload) => {
+  const query = 'iss.meta=off&iss.only=securities,marketdata,securities.cursor&securities.columns=SECID,SHORTNAME,COUPONVALUE,NEXTCOUPON,FACEVALUE,ACCRUEDINT&marketdata.columns=SECID,LAST,MARKETPRICE,LASTTOPREVPRICE'
+  const requestPage = async (start: number) => {
+    const response = await fetch(`${base}/${market}/boards/${board}/securities.json?${query}&start=${start}`)
+    if (!response.ok) throw new Error('MOEX is unavailable')
+    return response.json() as Promise<IssResponse>
+  }
+  const first = await requestPage(0)
+  const cursor = blockRows(first['securities.cursor'])[0]
+  const total = Number(cursor?.TOTAL ?? 0)
+  const pageSize = Number(cursor?.PAGESIZE ?? 100)
+  const starts = Array.from({ length: Math.max(0, Math.ceil(total / pageSize) - 1) }, (_, index) => (index + 1) * pageSize)
+  const payloads = [first, ...await Promise.all(starts.map(requestPage))]
+
+  return payloads.flatMap((payload) => {
     const securityRows = blockRows(payload.securities)
     const marketRows = blockRows(payload.marketdata)
     return securityRows.map((security) => ({
       ...security,
       ...marketRows.find((market) => market.SECID === security.SECID),
     }))
-  })
-
-  return fallbackInstruments.map((instrument) => {
-    const row = rows.find((item) => item.SECID === instrument.secid)
-    if (!row) return instrument
+  }).map((row): Instrument => {
+    const isBond = market === 'bonds'
     const price = Number(row.LAST ?? row.MARKETPRICE)
     const coupon = Number(row.COUPONVALUE)
+    const faceValue = Number(row.FACEVALUE)
+    const accrued = Number(row.ACCRUEDINT)
+    const safePrice = Number.isFinite(price) && price > 0 ? price : 0
     const couponDate = typeof row.NEXTCOUPON === 'string'
       ? new Date(row.NEXTCOUPON).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })
-      : instrument.date
+      : '—'
     return {
-      ...instrument,
-      name: typeof row.SHORTNAME === 'string' ? row.SHORTNAME : instrument.name,
-      price: Number.isFinite(price) && price > 0 ? price : instrument.price,
-      change: instrument.kind === 'Акция' && Number.isFinite(Number(row.LASTTOPREVPRICE))
-        ? Number(row.LASTTOPREVPRICE)
-        : instrument.change,
-      coupon: instrument.kind === 'Облигация' && Number.isFinite(coupon)
-        ? `${coupon.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽`
-        : instrument.coupon,
+      secid: String(row.SECID),
+      ticker: String(row.SECID),
+      name: String(row.SHORTNAME ?? row.SECID),
+      kind: isBond ? 'Облигация' : 'Акция',
+      category,
+      price: safePrice,
+      valuePrice: isBond && Number.isFinite(faceValue)
+        ? safePrice / 100 * faceValue + (Number.isFinite(accrued) ? accrued : 0)
+        : safePrice,
+      change: Number.isFinite(Number(row.LASTTOPREVPRICE)) ? Number(row.LASTTOPREVPRICE) : undefined,
+      coupon: isBond && Number.isFinite(coupon) ? `${coupon.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : undefined,
       date: couponDate,
+      priceUnit: isBond ? '%' : '₽',
     }
   })
+}
+
+const loadMoexMarket = async () => {
+  const groups = await Promise.all([
+    loadBoard('shares', 'TQBR', 'Акции'),
+    loadBoard('bonds', 'TQOB', 'ОФЗ'),
+    loadBoard('bonds', 'TQCB', 'Корпоративные'),
+  ])
+  return groups.flat().filter((instrument) => instrument.price > 0)
 }
 
 function App() {
@@ -100,6 +124,9 @@ function App() {
   const [instruments, setInstruments] = useState(fallbackInstruments)
   const [marketStatus, setMarketStatus] = useState<'loading' | 'live' | 'error'>('loading')
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
+  const [marketQuery, setMarketQuery] = useState('')
+  const [marketFilter, setMarketFilter] = useState<'Все' | Instrument['category']>('Все')
+  const [visibleCount, setVisibleCount] = useState(20)
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
     const saved = localStorage.getItem('investai-portfolio')
     if (!saved) return {}
@@ -118,8 +145,16 @@ function App() {
   const [showAdvice, setShowAdvice] = useState(false)
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
+  const filteredInstruments = useMemo(() => {
+    const query = marketQuery.trim().toLocaleLowerCase('ru')
+    return instruments.filter((instrument) => {
+      const matchesFilter = marketFilter === 'Все' || instrument.category === marketFilter
+      const matchesQuery = !query || `${instrument.ticker} ${instrument.name}`.toLocaleLowerCase('ru').includes(query)
+      return matchesFilter && matchesQuery
+    })
+  }, [instruments, marketFilter, marketQuery])
   const portfolioValue = useMemo(
-    () => portfolioItems.reduce((sum, instrument) => sum + instrument.price * portfolio[instrument.ticker].quantity, 0),
+    () => portfolioItems.reduce((sum, instrument) => sum + instrument.valuePrice * portfolio[instrument.ticker].quantity, 0),
     [portfolio, portfolioItems],
   )
   const investedValue = useMemo(
@@ -128,7 +163,7 @@ function App() {
   )
   const profit = portfolioValue - investedValue
   const stockShare = portfolioValue
-    ? portfolioItems.filter((item) => item.kind === 'Акция').reduce((sum, item) => sum + item.price * portfolio[item.ticker].quantity, 0) / portfolioValue * 100
+    ? portfolioItems.filter((item) => item.kind === 'Акция').reduce((sum, item) => sum + item.valuePrice * portfolio[item.ticker].quantity, 0) / portfolioValue * 100
     : 0
 
   const advice = portfolioItems.length === 0
@@ -145,13 +180,13 @@ function App() {
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light')
     setSelectedInstrument(instrument)
     setQuantity('1')
-    setBuyPrice(String(instrument.price))
+    setBuyPrice(String(instrument.valuePrice))
   }
 
   const addInstrument = () => {
     if (!selectedInstrument) return
     const amount = Math.max(1, Number(quantity) || 1)
-    const price = Math.max(0, Number(buyPrice) || selectedInstrument.price)
+    const price = Math.max(0, Number(buyPrice) || selectedInstrument.valuePrice)
     setPortfolio((current) => {
       const existing = current[selectedInstrument.ticker]
       const totalQuantity = (existing?.quantity ?? 0) + amount
@@ -192,7 +227,7 @@ function App() {
       }
     }
     void refreshMarket()
-    const timer = window.setInterval(refreshMarket, 60_000)
+    const timer = window.setInterval(refreshMarket, 5 * 60_000)
     return () => {
       active = false
       window.clearInterval(timer)
@@ -201,6 +236,10 @@ function App() {
 
   const formatPrice = (instrument: Instrument) =>
     `${instrument.price.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ${instrument.priceUnit ?? '₽'}`
+
+  useEffect(() => {
+    setVisibleCount(20)
+  }, [marketFilter, marketQuery])
 
   return (
     <div className={isTelegram ? 'telegram-app' : undefined}>
@@ -276,7 +315,7 @@ function App() {
               <article className="portfolio-row" key={instrument.ticker}>
                 <span className="instrument-badge">{instrument.kind === 'Акция' ? 'A' : 'О'}</span>
                 <div><strong>{instrument.ticker}</strong><p>{portfolio[instrument.ticker].quantity} шт. · средняя {portfolio[instrument.ticker].buyPrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</p></div>
-                <strong>{(portfolio[instrument.ticker].quantity * instrument.price).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
+                <strong>{(portfolio[instrument.ticker].quantity * instrument.valuePrice).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong>
                 <button className="remove-button" onClick={() => setPortfolio((current) => {
                   const next = { ...current }
                   delete next[instrument.ticker]
@@ -290,7 +329,7 @@ function App() {
 
       <section className="market-section" id="market">
         <div className="section-heading">
-          <div><p className="eyebrow">РЫНОК</p><h2>Акции и облигации</h2></div>
+          <div><p className="eyebrow">КАТАЛОГ MOEX</p><h2>Акции и облигации</h2></div>
           <span className={`demo-label ${marketStatus}`}>
             {marketStatus === 'loading'
               ? 'обновляем…'
@@ -299,20 +338,55 @@ function App() {
                 : 'последние сохранённые цены'}
           </span>
         </div>
+        <div className="market-tools">
+          <label className="market-search">
+            <span>⌕</span>
+            <input
+              type="search"
+              value={marketQuery}
+              onChange={(event) => setMarketQuery(event.target.value)}
+              placeholder="Название или тикер"
+              aria-label="Поиск ценных бумаг"
+            />
+          </label>
+          <div className="market-filters" role="group" aria-label="Тип ценной бумаги">
+            {(['Все', 'Акции', 'ОФЗ', 'Корпоративные'] as const).map((filter) => (
+              <button
+                className={marketFilter === filter ? 'active' : undefined}
+                key={filter}
+                onClick={() => setMarketFilter(filter)}
+                type="button"
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+          <p className="catalog-count">
+            {marketStatus === 'loading' ? 'Загружаем каталог…' : `Найдено: ${filteredInstruments.length}`}
+          </p>
+        </div>
         <div className="market-list">
-          {instruments.map((instrument) => (
+          {filteredInstruments.slice(0, visibleCount).map((instrument) => (
             <article className="market-row" key={instrument.ticker}>
-              <div className="market-main"><strong>{instrument.ticker}</strong><p>{instrument.name} · {instrument.kind}</p></div>
+              <div className="market-main"><strong>{instrument.ticker}</strong><p>{instrument.name} · {instrument.category}</p></div>
               <div className="market-price"><strong>{formatPrice(instrument)}</strong>{instrument.change !== undefined ? <span className={instrument.change >= 0 ? 'up' : 'down'}>{instrument.change >= 0 ? '+' : ''}{instrument.change}%</span> : <span>Купон {instrument.coupon}</span>}</div>
               <button className="add-button" onClick={() => openAddInstrument(instrument)} aria-label={`Добавить ${instrument.name}`}>＋</button>
             </article>
           ))}
         </div>
+        {marketStatus !== 'loading' && filteredInstruments.length === 0 && (
+          <div className="catalog-empty">Ничего не найдено. Попробуйте другой тикер или фильтр.</div>
+        )}
+        {visibleCount < filteredInstruments.length && (
+          <button className="load-more" type="button" onClick={() => setVisibleCount((count) => count + 20)}>
+            Показать ещё
+          </button>
+        )}
       </section>
 
       <section className="coupon-section" id="coupons">
         <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>Ближайшие купоны</h2></div></div>
-        {instruments.filter((item) => item.coupon).map((bond) => <div className="coupon-row" key={bond.ticker}><span>₽</span><div><strong>{bond.name}</strong><p>{bond.ticker}</p></div><div><strong>{bond.coupon}</strong><p>{bond.date}</p></div></div>)}
+        {instruments.filter((item) => item.coupon).slice(0, 4).map((bond) => <div className="coupon-row" key={bond.ticker}><span>₽</span><div><strong>{bond.name}</strong><p>{bond.ticker}</p></div><div><strong>{bond.coupon}</strong><p>{bond.date}</p></div></div>)}
       </section>
 
       <section className="ai-card" id="ai">
@@ -342,7 +416,7 @@ function App() {
             <h2>{selectedInstrument.name}</h2>
             <p className="modal-caption">{selectedInstrument.ticker} · текущая цена {formatPrice(selectedInstrument)}</p>
             <label>Количество<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-            <label>Цена покупки, ₽<input type="number" min="0" step="0.01" value={buyPrice} onChange={(event) => setBuyPrice(event.target.value)} /></label>
+            <label>Цена покупки за бумагу, ₽<input type="number" min="0" step="0.01" value={buyPrice} onChange={(event) => setBuyPrice(event.target.value)} /></label>
             <div className="modal-total"><span>Сумма</span><strong>{((Number(quantity) || 0) * (Number(buyPrice) || 0)).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
             <button className="modal-submit" type="submit">Добавить актив</button>
           </form>
