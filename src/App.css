@@ -32,3 +32,36 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 26px
 .telegram-app .app-shell > .market-section, .telegram-app .app-shell > .coupon-section, .telegram-app .app-shell > .ai-card { display: none; }.telegram-app .app-shell:not(.view-portfolio) > .dashboard-grid, .telegram-app .app-shell:not(.view-portfolio) > .summary-grid, .telegram-app .app-shell:not(.view-portfolio) > .allocation-card, .telegram-app .app-shell:not(.view-portfolio) > .portfolio-section { display: none; }.telegram-app .app-shell.view-market > .market-section, .telegram-app .app-shell.view-coupons > .coupon-section, .telegram-app .app-shell.view-ai > .ai-card { display: flex; margin-top: 8px; }.telegram-app .app-shell.view-market > .market-section, .telegram-app .app-shell.view-coupons > .coupon-section { display: block; }
 .telegram-app .view-portfolio .quick-stats, .telegram-app .view-portfolio > .allocation-card, .telegram-app .portfolio-section .text-button { display: none; }.telegram-app .view-portfolio .summary-grid { display: block; }.telegram-app .view-portfolio .portfolio-section { margin-top: 28px; }
 .telegram-app .telegram-nav { position: fixed; z-index: 20; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(4, 1fr); padding: 9px max(10px, calc((100% - 560px) / 2)); border-top: 1px solid rgba(148,159,220,.18); background: rgba(9, 11, 24, .92); box-shadow: 0 -12px 35px rgba(0,0,0,.22); backdrop-filter: blur(20px); }.telegram-nav button { display: grid; gap: 3px; justify-items: center; padding: 5px; border: 0; color: #8a94b9; background: transparent; font: inherit; font-size: 9px; cursor: pointer; }.telegram-nav button span { color: #8a94b9; font-size: 18px; }.telegram-nav button.active, .telegram-nav button.active span { color: #e5e8ff; }
+
+/* Сдержанный интерфейс Telegram Mini App */
+.telegram-app { min-height: 100svh; background: #080808; }
+.telegram-app .topbar { border: 0; background: #080808; box-shadow: none; }
+.telegram-app .brand-mark { width: 48px; height: 48px; border-radius: 13px; filter: none; }
+.telegram-app .brand-copy small { color: #d7d7d9; font-size: 12px; }
+.telegram-app .dashboard-grid { align-items: center; margin-bottom: 16px; }
+.telegram-app .dashboard-grid .eyebrow { display: none; }
+.telegram-app .dashboard-grid h2 { font-size: 24px; letter-spacing: -.5px; }
+.telegram-app .status-pill { border: 0; color: #8bdfaa; background: rgba(38, 121, 70, .2); }
+.telegram-app .hero-card { padding: 24px 20px 20px; border: 0; border-radius: 24px; background: #1d1d1f; box-shadow: none; }
+.telegram-app .hero-card::after { display: none; }
+.telegram-app .card-label { color: #a6a6aa; }
+.telegram-app .portfolio-value { margin-top: 12px; color: #f5f5f7; font: 750 38px/1.05 system-ui, sans-serif; letter-spacing: -1.2px; }
+.telegram-app .currency-switch, .telegram-app .period-switch { border: 0; border-radius: 11px; background: #2b2b2e; }
+.telegram-app .currency-switch button, .telegram-app .period-switch button { color: #aaaab0; }
+.telegram-app .currency-switch button.active, .telegram-app .period-switch button.active { color: #111; background: #f1f1f3; }
+.telegram-app .yield-chip { color: #36d874; background: transparent; padding-right: 0; padding-left: 0; font-size: 12px; }
+.telegram-app .yield-chip.negative { color: #ff5268; background: transparent; }
+.telegram-app .portfolio-meta { border-color: #343438; }
+.telegram-app .portfolio-meta small { color: #8e8e93; }
+.telegram-app .primary-button { border-radius: 15px; color: #f1f1f3; background: #333336; font-size: 14px; }
+.telegram-app .portfolio-section .eyebrow { display: none; }
+.telegram-app .portfolio-row, .telegram-app .market-row, .telegram-app .coupon-row { border: 0; border-radius: 18px; background: #1d1d1f; box-shadow: none; }
+.telegram-app .instrument-badge { color: #f1f1f3; background: #303033; }
+.telegram-app .market-search { border: 0; background: #1d1d1f; }
+.telegram-app .market-filters button, .telegram-app .market-sort select { border-color: #343438; background: #1d1d1f; }
+.telegram-app .market-filters button.active { border-color: #55555a; background: #343438; }
+.telegram-app .favorites-card, .telegram-app .allocation-card, .telegram-app .ai-card { border: 0; background: #1d1d1f; box-shadow: none; }
+.telegram-app .telegram-nav { border-color: #2b2b2e; background: rgba(24, 24, 25, .97); box-shadow: none; }
+.telegram-app .telegram-nav button { color: #77777d; }
+.telegram-app .telegram-nav button span { color: #8a8a90; font-size: 20px; }
+.telegram-app .telegram-nav button.active, .telegram-app .telegram-nav button.active span { color: #f2f2f4; }
