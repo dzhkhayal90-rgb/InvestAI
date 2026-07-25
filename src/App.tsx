@@ -62,6 +62,15 @@ type PortfolioSnapshot = {
   value: number
 }
 
+type CashFlow = {
+  id: string
+  type: 'Пополнение' | 'Вывод' | 'Дивиденд'
+  amount: number
+  date: string
+  ticker?: string
+  note?: string
+}
+
 type Currency = 'RUB' | 'USD' | 'EUR'
 type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai'
 
@@ -203,6 +212,13 @@ function App() {
   const [buyPrice, setBuyPrice] = useState('')
   const [showAdvice, setShowAdvice] = useState(false)
   const [showOperations, setShowOperations] = useState(false)
+  const [showCashFlow, setShowCashFlow] = useState(false)
+  const [cashFlowType, setCashFlowType] = useState<CashFlow['type']>('Пополнение')
+  const [cashFlowAmount, setCashFlowAmount] = useState('')
+  const [cashFlowTicker, setCashFlowTicker] = useState('')
+  const [cashFlowDate, setCashFlowDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [bondCalculator, setBondCalculator] = useState<Instrument | null>(null)
+  const [calculatorQuantity, setCalculatorQuantity] = useState('1')
   const [showGoal, setShowGoal] = useState(false)
   const [goalInput, setGoalInput] = useState('')
   const [investmentGoal, setInvestmentGoal] = useState(() => Number(localStorage.getItem('investai-goal')) || 0)
@@ -219,6 +235,10 @@ function App() {
   const [portfolioHistory, setPortfolioHistory] = useState<PortfolioSnapshot[]>(() => {
     const saved = localStorage.getItem('investai-history')
     return saved ? JSON.parse(saved) as PortfolioSnapshot[] : []
+  })
+  const [cashFlows, setCashFlows] = useState<CashFlow[]>(() => {
+    const saved = localStorage.getItem('investai-cash-flows')
+    return saved ? JSON.parse(saved) as CashFlow[] : []
   })
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
@@ -245,8 +265,14 @@ function App() {
     () => portfolioItems.reduce((sum, instrument) => sum + portfolio[instrument.ticker].buyPrice * portfolio[instrument.ticker].quantity, 0),
     [portfolio, portfolioItems],
   )
-  const profit = portfolioValue - investedValue
-  const profitPercent = investedValue ? profit / investedValue * 100 : 0
+  const deposits = cashFlows.filter((flow) => flow.type === 'Пополнение').reduce((sum, flow) => sum + flow.amount, 0)
+  const withdrawals = cashFlows.filter((flow) => flow.type === 'Вывод').reduce((sum, flow) => sum + flow.amount, 0)
+  const dividends = cashFlows.filter((flow) => flow.type === 'Дивиденд').reduce((sum, flow) => sum + flow.amount, 0)
+  const trackedCapital = deposits - withdrawals
+  const marketProfit = portfolioValue - investedValue
+  const profit = trackedCapital > 0 ? portfolioValue + withdrawals + dividends - deposits : marketProfit + dividends
+  const profitBase = trackedCapital > 0 ? deposits : investedValue
+  const profitPercent = profitBase ? profit / profitBase * 100 : 0
   const todayProfit = portfolioItems.reduce((sum, instrument) => {
     const currentValue = instrument.valuePrice * portfolio[instrument.ticker].quantity
     const change = instrument.change ?? 0
@@ -285,6 +311,53 @@ function App() {
     (sum, bond) => sum + (bond.couponValue ?? 0) * portfolio[bond.ticker].quantity,
     0,
   )
+  const allocationItems = portfolioItems
+    .map((instrument) => ({
+      instrument,
+      value: instrument.valuePrice * portfolio[instrument.ticker].quantity,
+      share: portfolioValue ? instrument.valuePrice * portfolio[instrument.ticker].quantity / portfolioValue * 100 : 0,
+    }))
+    .sort((a, b) => b.value - a.value)
+  const allocationColors = ['#38d878', '#5f7cff', '#bd75ef', '#f0a44b', '#35c6d4', '#ef6680']
+  const allocationGradient = allocationItems.length
+    ? allocationItems.reduce<{ stops: string[]; cursor: number }>((result, item, index) => {
+        const next = result.cursor + item.share
+        result.stops.push(`${allocationColors[index % allocationColors.length]} ${result.cursor}% ${next}%`)
+        result.cursor = next
+        return result
+      }, { stops: [], cursor: 0 }).stops.join(', ')
+    : '#303033 0 100%'
+  const paymentEvents = [
+    ...portfolioBonds.filter((bond) => bond.couponDate).flatMap((bond) => {
+      const firstDate = new Date(`${bond.couponDate}T12:00:00`)
+      const maturity = bond.maturityDate ? new Date(`${bond.maturityDate}T12:00:00`) : firstDate
+      const dates: Date[] = []
+      for (let date = firstDate, index = 0; date <= maturity && index < 20; index += 1) {
+        dates.push(date)
+        date = new Date(date)
+        date.setMonth(date.getMonth() + 6)
+      }
+      return dates.map((date, index) => ({
+        id: `coupon-${bond.ticker}-${index}`,
+        date: date.toISOString(),
+        title: bond.name,
+        type: 'Купон',
+        amount: (bond.couponValue ?? 0) * portfolio[bond.ticker].quantity,
+      }))
+    }),
+    ...cashFlows.filter((flow) => flow.type === 'Дивиденд').map((flow) => ({
+      id: flow.id,
+      date: flow.date,
+      title: flow.ticker || flow.note || 'Дивиденды',
+      type: 'Дивиденд',
+      amount: flow.amount,
+    })),
+  ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+  const paymentMonths = Object.entries(paymentEvents.reduce<Record<string, typeof paymentEvents>>((groups, payment) => {
+    const key = payment.date.slice(0, 7)
+    groups[key] = [...(groups[key] ?? []), payment]
+    return groups
+  }, {}))
   const monthlyGoalContribution = investmentGoal
     ? Math.max(0, investmentGoal - portfolioValue) / Math.max(1, goalMonths)
     : 0
@@ -396,6 +469,23 @@ function App() {
     setShowGoal(false)
   }
 
+  const saveCashFlow = () => {
+    const amount = Math.max(0, Number(cashFlowAmount) || 0)
+    if (!amount) return
+    const next: CashFlow = {
+      id: `${Date.now()}-${cashFlowType}`,
+      type: cashFlowType,
+      amount,
+      date: new Date(`${cashFlowDate}T12:00:00`).toISOString(),
+      ticker: cashFlowType === 'Дивиденд' ? cashFlowTicker.trim().toUpperCase() || undefined : undefined,
+    }
+    setCashFlows((current) => [next, ...current].slice(0, 200))
+    setCashFlowAmount('')
+    setCashFlowTicker('')
+    setShowCashFlow(false)
+    setNotice(`${cashFlowType} сохранено`)
+  }
+
   const exportPortfolio = () => {
     const data = JSON.stringify({
       version: 1,
@@ -407,6 +497,7 @@ function App() {
       goalMonths,
       completedLessons,
       portfolioHistory,
+      cashFlows,
     }, null, 2)
     const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
     const link = document.createElement('a')
@@ -427,6 +518,7 @@ function App() {
         goalMonths?: number
         completedLessons?: string[]
         portfolioHistory?: PortfolioSnapshot[]
+        cashFlows?: CashFlow[]
       }
       if (data.portfolio) setPortfolio(data.portfolio)
       if (data.favorites) setFavorites(data.favorites)
@@ -435,6 +527,7 @@ function App() {
       if (typeof data.goalMonths === 'number') setGoalMonths(data.goalMonths)
       if (data.completedLessons) setCompletedLessons(data.completedLessons)
       if (data.portfolioHistory) setPortfolioHistory(data.portfolioHistory)
+      if (data.cashFlows) setCashFlows(data.cashFlows)
       setNotice('Резервная копия восстановлена')
       setShowOperations(false)
     } catch {
@@ -480,6 +573,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('investai-history', JSON.stringify(portfolioHistory))
   }, [portfolioHistory])
+
+  useEffect(() => {
+    localStorage.setItem('investai-cash-flows', JSON.stringify(cashFlows))
+  }, [cashFlows])
 
   useEffect(() => {
     localStorage.setItem('investai-currency', currency)
@@ -609,10 +706,11 @@ function App() {
               <div className="portfolio-meta">
                 <span><small>Вложено</small><strong>{formatMoney(investedValue)}</strong></span>
                 <span><small>Активов</small><strong>{portfolioItems.length}</strong></span>
+                {dividends > 0 && <span><small>Дивиденды</small><strong>{formatMoney(dividends)}</strong></span>}
               </div>
             )}
             {isTelegram
-              ? <div className="portfolio-actions"><button className="primary-button" type="button" onClick={() => setActiveSection('market')}>＋ Добавить</button><button className="primary-button secondary-action" type="button" onClick={() => setShowOperations(true)}>Операции</button></div>
+              ? <div className="portfolio-actions"><button className="primary-button" type="button" onClick={() => setActiveSection('market')}>＋ Актив</button><button className="primary-button secondary-action" type="button" onClick={() => setShowCashFlow(true)}>₽ Деньги</button><button className="primary-button secondary-action operations-action" type="button" onClick={() => setShowOperations(true)}>Операции</button></div>
               : <a className="primary-button" href="#market">＋ Добавить актив</a>}
           </article>
           <div className="quick-stats">
@@ -632,6 +730,12 @@ function App() {
             <div className="allocation-legend">
               <span><i className="stocks-dot" />Акции <strong>{stockShare.toFixed(0)}%</strong></span>
               <span><i className="bonds-dot" />Облигации <strong>{(100 - stockShare).toFixed(0)}%</strong></span>
+            </div>
+            <div className="holdings-allocation">
+              <div className="donut-chart" style={{ background: `conic-gradient(${allocationGradient})` }}><span>{portfolioItems.length}<small>бумаг</small></span></div>
+              <div className="holdings-legend">
+                {allocationItems.slice(0, 6).map((item, index) => <div key={item.instrument.ticker}><i style={{ background: allocationColors[index % allocationColors.length] }} /><span>{item.instrument.ticker}</span><strong>{item.share.toFixed(1)}%</strong></div>)}
+              </div>
             </div>
           </section>
         )}
@@ -785,9 +889,16 @@ function App() {
       </section>
 
       <section className="coupon-section" id="coupons">
-        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>{portfolioBonds.length ? 'Ваши выплаты' : 'Ближайшие купоны MOEX'}</h2></div></div>
+        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>{portfolioBonds.length || dividends ? 'Ваши выплаты' : 'Ближайшие купоны MOEX'}</h2></div><button className="text-button" type="button" onClick={() => { setCashFlowType('Дивиденд'); setShowCashFlow(true) }}>＋ Дивиденд</button></div>
+        {paymentMonths.length > 0 && <div className="payment-calendar">
+          {paymentMonths.map(([month, payments]) => <article key={month}>
+            <div className="payment-month"><div><strong>{new Date(`${month}-01T12:00:00`).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</strong><small>{payments.length} выплат</small></div><strong>{payments.reduce((sum, payment) => sum + payment.amount, 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+            {payments.map((payment) => <div className="payment-event" key={payment.id}><span className={payment.type === 'Дивиденд' ? 'dividend-event' : ''}>{payment.type === 'Дивиденд' ? 'D' : '₽'}</span><div><strong>{payment.title}</strong><small>{payment.type} · {new Date(payment.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</small></div><strong>{payment.amount.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>)}
+          </article>)}
+        </div>}
+        {portfolioBonds.length > 0 && <p className="calendar-hint schedule-note">Будущие купоны рассчитаны ориентировочно с интервалом 6 месяцев до погашения. Фактический график эмитента может отличаться.</p>}
         {!portfolioBonds.length && <p className="calendar-hint">Добавьте облигацию в портфель — сумма выплаты рассчитается с учётом количества.</p>}
-        {calendarBonds.map((bond) => {
+        {paymentMonths.length === 0 && calendarBonds.map((bond) => {
           const amount = portfolio[bond.ticker]
             ? (bond.couponValue ?? 0) * portfolio[bond.ticker].quantity
             : bond.couponValue ?? 0
@@ -905,6 +1016,11 @@ function App() {
               </>}
             </div>
             <p className="detail-note">{detailInstrument.kind === 'Облигация' ? 'Цена облигации на бирже указана в процентах от номинала. Цена за бумагу учитывает НКД.' : 'Изменение рассчитано относительно предыдущей торговой сессии.'}</p>
+            {detailInstrument.kind === 'Облигация' && <button className="calculator-button" type="button" onClick={() => {
+              setBondCalculator(detailInstrument)
+              setCalculatorQuantity(String(portfolio[detailInstrument.ticker]?.quantity ?? 1))
+              setDetailInstrument(null)
+            }}>Калькулятор облигации</button>}
             <button className="modal-submit" type="button" onClick={() => {
               const instrument = detailInstrument
               setDetailInstrument(null)
@@ -966,10 +1082,70 @@ function App() {
                 <div><strong>{operation.quantity} шт.</strong><small>{operation.price.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</small></div>
               </article>
             ))}</div> : <div className="catalog-empty">Операций пока нет. Добавьте первый актив.</div>}
+            {cashFlows.length > 0 && <>
+              <p className="operations-subtitle">Денежные операции</p>
+              <div className="operations-list">{cashFlows.map((flow) => (
+                <article key={flow.id}>
+                  <span className={`operation-icon cash-${flow.type.toLocaleLowerCase('ru')}`}>{flow.type === 'Пополнение' ? '+' : flow.type === 'Вывод' ? '−' : 'D'}</span>
+                  <div><strong>{flow.ticker || flow.type}</strong><small>{flow.type} · {new Date(flow.date).toLocaleDateString('ru-RU')}</small></div>
+                  <div><strong>{flow.amount.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong><button className="delete-flow" type="button" onClick={() => setCashFlows((current) => current.filter((item) => item.id !== flow.id))}>Удалить</button></div>
+                </article>
+              ))}</div>
+            </>}
             <div className="backup-actions">
               <button type="button" onClick={exportPortfolio}>Скачать копию</button>
               <label>Восстановить<input type="file" accept="application/json,.json" onChange={(event) => { void importPortfolio(event.target.files?.[0]) }} /></label>
             </div>
+          </section>
+        </div>
+      )}
+
+      {showCashFlow && (
+        <div className="modal-backdrop" onClick={() => setShowCashFlow(false)}>
+          <form className="asset-modal" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); saveCashFlow() }}>
+            <button className="modal-close" type="button" onClick={() => setShowCashFlow(false)} aria-label="Закрыть">×</button>
+            <p className="eyebrow">ДЕНЕЖНАЯ ОПЕРАЦИЯ</p>
+            <h2>Учёт движения денег</h2>
+            <div className="flow-type-switch">
+              {(['Пополнение', 'Вывод', 'Дивиденд'] as CashFlow['type'][]).map((type) => <button className={cashFlowType === type ? 'active' : ''} type="button" onClick={() => setCashFlowType(type)} key={type}>{type}</button>)}
+            </div>
+            {cashFlowType === 'Дивиденд' && <label>Тикер акции<input value={cashFlowTicker} onChange={(event) => setCashFlowTicker(event.target.value)} placeholder="Например, SBER" /></label>}
+            <label>Сумма, ₽<input type="number" min="0" step="0.01" value={cashFlowAmount} onChange={(event) => setCashFlowAmount(event.target.value)} placeholder="10000" autoFocus /></label>
+            <label>Дата<input type="date" value={cashFlowDate} onChange={(event) => setCashFlowDate(event.target.value)} /></label>
+            <p className="detail-note">Пополнения и выводы учитываются при расчёте общей доходности. Дивиденды добавляются к финансовому результату.</p>
+            <button className="modal-submit" type="submit">Сохранить операцию</button>
+          </form>
+        </div>
+      )}
+
+      {bondCalculator && (
+        <div className="modal-backdrop" onClick={() => setBondCalculator(null)}>
+          <section className="asset-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setBondCalculator(null)} aria-label="Закрыть">×</button>
+            <p className="eyebrow">КАЛЬКУЛЯТОР ОБЛИГАЦИЙ</p>
+            <h2>{bondCalculator.name}</h2>
+            <p className="modal-caption">{bondCalculator.ticker} · расчёт до погашения</p>
+            <label>Количество<input type="number" min="1" step="1" value={calculatorQuantity} onChange={(event) => setCalculatorQuantity(event.target.value)} /></label>
+            {(() => {
+              const count = Math.max(1, Number(calculatorQuantity) || 1)
+              const purchase = bondCalculator.valuePrice * count
+              const redemption = (bondCalculator.faceValue ?? 1000) * count
+              const coupon = (bondCalculator.couponValue ?? 0) * count
+              const maturityYears = bondCalculator.maturityDate ? Math.max(0, (new Date(bondCalculator.maturityDate).getTime() - Date.now()) / 31_557_600_000) : 0
+              const estimatedCouponPayments = maturityYears ? Math.max(1, Math.floor(maturityYears * 2)) : 1
+              const totalCoupons = coupon * estimatedCouponPayments
+              const result = redemption + totalCoupons - purchase
+              const yieldPercent = purchase ? result / purchase * 100 : 0
+              return <div className="bond-results">
+                <div><span>Стоимость покупки</span><strong>{purchase.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+                <div><span>Ближайший купон</span><strong>{coupon.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+                <div><span>Оценка купонов до погашения</span><strong>{totalCoupons.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+                <div><span>Сумма при погашении</span><strong>{redemption.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+                <div className="bond-result-total"><span>Ориентировочная доходность</span><strong>{yieldPercent.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%</strong></div>
+              </div>
+            })()}
+            <p className="advice-disclaimer">Оценочный расчёт предполагает две купонные выплаты в год. Налоги, комиссии и реинвестирование не учитываются.</p>
+            <button className="modal-submit" type="button" onClick={() => setBondCalculator(null)}>Готово</button>
           </section>
         </div>
       )}
