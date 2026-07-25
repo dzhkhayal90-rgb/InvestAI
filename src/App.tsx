@@ -153,6 +153,10 @@ function App() {
         : position,
     ]))
   })
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    const saved = localStorage.getItem('investai-favorites')
+    return saved ? JSON.parse(saved) as string[] : []
+  })
   const [notice, setNotice] = useState('Выберите бумагу из списка рынка')
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null)
   const [detailInstrument, setDetailInstrument] = useState<Instrument | null>(null)
@@ -161,6 +165,7 @@ function App() {
   const [showAdvice, setShowAdvice] = useState(false)
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
+  const favoriteItems = instruments.filter((instrument) => favorites.includes(instrument.ticker))
   const filteredInstruments = useMemo(() => {
     const query = marketQuery.trim().toLocaleLowerCase('ru')
     return instruments.filter((instrument) => {
@@ -182,6 +187,13 @@ function App() {
   const stockShare = portfolioValue
     ? portfolioItems.filter((item) => item.kind === 'Акция').reduce((sum, item) => sum + item.valuePrice * portfolio[item.ticker].quantity, 0) / portfolioValue * 100
     : 0
+  const largestPositionShare = portfolioValue
+    ? Math.max(...portfolioItems.map((item) => item.valuePrice * portfolio[item.ticker].quantity / portfolioValue * 100))
+    : 0
+  const diversificationScore = Math.min(
+    100,
+    Math.round(portfolioItems.length * 14 + Math.min(stockShare, 100 - stockShare) * 0.9),
+  )
   const portfolioBonds = portfolioItems
     .filter((item) => item.kind === 'Облигация' && item.couponValue)
     .sort((a, b) => (a.couponDate ? new Date(a.couponDate).getTime() : Infinity) - (b.couponDate ? new Date(b.couponDate).getTime() : Infinity))
@@ -233,6 +245,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('investai-portfolio', JSON.stringify(portfolio))
   }, [portfolio])
+
+  useEffect(() => {
+    localStorage.setItem('investai-favorites', JSON.stringify(favorites))
+  }, [favorites])
 
   useEffect(() => {
     const webApp = window.Telegram?.WebApp
@@ -370,6 +386,23 @@ function App() {
                 : 'последние сохранённые цены'}
           </span>
         </div>
+        {favoriteItems.length > 0 && (
+          <section className="favorites-card" aria-label="Избранные бумаги">
+            <div className="section-heading">
+              <div><p className="eyebrow">НАБЛЮДЕНИЕ</p><h3>Избранное</h3></div>
+              <span className="favorite-count">{favoriteItems.length}</span>
+            </div>
+            <div className="favorite-list">
+              {favoriteItems.slice(0, 6).map((instrument) => (
+                <button type="button" onClick={() => setDetailInstrument(instrument)} key={instrument.ticker}>
+                  <span>{instrument.ticker}</span>
+                  <strong>{formatPrice(instrument)}</strong>
+                  {instrument.change !== undefined && <small className={instrument.change >= 0 ? 'up' : 'down'}>{instrument.change >= 0 ? '+' : ''}{instrument.change}%</small>}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="market-tools">
           <label className="market-search">
             <span>⌕</span>
@@ -402,6 +435,14 @@ function App() {
             <article className="market-row" key={instrument.ticker}>
               <button className="market-main instrument-open" type="button" onClick={() => setDetailInstrument(instrument)}><strong>{instrument.ticker}</strong><p>{instrument.name} · {instrument.category}</p></button>
               <div className="market-price"><strong>{formatPrice(instrument)}</strong>{instrument.change !== undefined ? <span className={instrument.change >= 0 ? 'up' : 'down'}>{instrument.change >= 0 ? '+' : ''}{instrument.change}%</span> : <span>Купон {instrument.coupon}</span>}</div>
+              <button
+                className={`favorite-button ${favorites.includes(instrument.ticker) ? 'active' : ''}`}
+                onClick={() => setFavorites((current) => current.includes(instrument.ticker)
+                  ? current.filter((ticker) => ticker !== instrument.ticker)
+                  : [...current, instrument.ticker])}
+                aria-label={favorites.includes(instrument.ticker) ? `Убрать ${instrument.name} из избранного` : `Добавить ${instrument.name} в избранное`}
+                type="button"
+              >★</button>
               <button className="add-button" onClick={() => openAddInstrument(instrument)} aria-label={`Добавить ${instrument.name}`}>＋</button>
             </article>
           ))}
@@ -503,6 +544,8 @@ function App() {
             <div className="advice-metrics">
               <div><span>Позиций</span><strong>{portfolioItems.length}</strong></div>
               <div><span>Результат</span><strong className={profit >= 0 ? 'up' : 'down'}>{profit >= 0 ? '+' : ''}{profit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong></div>
+              <div><span>Диверсификация</span><strong>{diversificationScore}/100</strong></div>
+              <div><span>Крупнейшая позиция</span><strong>{largestPositionShare.toFixed(0)}%</strong></div>
             </div>
             <p className="advice-disclaimer">Демонстрационный анализ, не инвестиционная рекомендация.</p>
             <button className="modal-submit" type="button" onClick={() => setShowAdvice(false)}>Понятно</button>
