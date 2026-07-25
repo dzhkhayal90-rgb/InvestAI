@@ -245,7 +245,19 @@ function App() {
     <div className={isTelegram ? 'telegram-app' : undefined}>
       <header className="topbar">
         <a className="brand" href="#">
-          <img className="brand-mark" src="./logo.svg" alt="" />
+          <svg className="brand-mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="brand-gradient" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+                <stop stopColor="#C8CDFF" />
+                <stop offset=".48" stopColor="#7B89F4" />
+                <stop offset="1" stopColor="#9B63EA" />
+              </linearGradient>
+            </defs>
+            <rect x="5" y="5" width="54" height="54" rx="17" fill="#11162D" />
+            <rect x="6" y="6" width="52" height="52" rx="16" stroke="url(#brand-gradient)" strokeOpacity=".65" strokeWidth="2" />
+            <path d="M17 42V30M28 42V23M39 42V16" stroke="url(#brand-gradient)" strokeWidth="5" strokeLinecap="round" />
+            <path d="m17 25 10-8 10 2 10-9m-5 0 5-.2-.2 5" stroke="#B9F0D1" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           <span className="brand-copy">
             <strong>InvestAI</strong>
             <small>{isTelegram ? `Привет, ${name}` : 'умные инвестиции'}</small>
