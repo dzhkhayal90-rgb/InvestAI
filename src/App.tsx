@@ -6,6 +6,7 @@ type TelegramWebApp = {
   expand: () => void
   initDataUnsafe?: { user?: { first_name?: string } }
   themeParams?: { bg_color?: string }
+  HapticFeedback?: { impactOccurred: (style: 'light' | 'medium' | 'heavy') => void }
 }
 
 declare global {
@@ -60,6 +61,7 @@ function App() {
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null)
   const [quantity, setQuantity] = useState('1')
   const [buyPrice, setBuyPrice] = useState('')
+  const [showAdvice, setShowAdvice] = useState(false)
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
   const portfolioValue = useMemo(
@@ -71,8 +73,22 @@ function App() {
     [portfolio, portfolioItems],
   )
   const profit = portfolioValue - investedValue
+  const stockShare = portfolioValue
+    ? portfolioItems.filter((item) => item.kind === 'Акция').reduce((sum, item) => sum + item.price * portfolio[item.ticker].quantity, 0) / portfolioValue * 100
+    : 0
+
+  const advice = portfolioItems.length === 0
+    ? 'Добавьте хотя бы две бумаги — после этого я оценю структуру портфеля.'
+    : portfolioItems.length === 1
+      ? 'Портфель зависит от одной бумаги. Для снижения риска добавьте актив другого эмитента.'
+      : stockShare > 80
+        ? `Акции занимают ${stockShare.toFixed(0)}% портфеля. Рассмотрите облигации, если хотите снизить колебания.`
+        : stockShare < 20
+          ? `Облигации занимают ${(100 - stockShare).toFixed(0)}% портфеля. Доля акций небольшая — потенциал роста может быть ограничен.`
+          : `Структура выглядит умеренно сбалансированной: акции ${stockShare.toFixed(0)}%, облигации ${(100 - stockShare).toFixed(0)}%.`
 
   const openAddInstrument = (instrument: Instrument) => {
+    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light')
     setSelectedInstrument(instrument)
     setQuantity('1')
     setBuyPrice(String(instrument.price))
@@ -91,6 +107,7 @@ function App() {
       return { ...current, [selectedInstrument.ticker]: { quantity: totalQuantity, buyPrice: averagePrice } }
     })
     setNotice(`${selectedInstrument.ticker} добавлен в портфель`)
+    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium')
     setSelectedInstrument(null)
   }
 
@@ -212,17 +229,24 @@ function App() {
         {instruments.filter((item) => item.coupon).map((bond) => <div className="coupon-row" key={bond.ticker}><span>₽</span><div><strong>{bond.name}</strong><p>{bond.ticker}</p></div><div><strong>{bond.coupon}</strong><p>{bond.date}</p></div></div>)}
       </section>
 
-      <section className="ai-card">
+      <section className="ai-card" id="ai">
         <span className="ai-orb">✦</span>
         <div>
           <p className="eyebrow">AI-ПОМОЩНИК</p>
           <h2>Помогу разобраться с портфелем</h2>
         </div>
-        <button aria-label="Открыть AI-помощника">→</button>
+        <button onClick={() => setShowAdvice(true)} aria-label="Открыть AI-помощника">→</button>
       </section>
 
       </main>
       <footer><span>InvestAI</span><p>Демонстрационный сервис. Не является инвестиционной рекомендацией.</p></footer>
+
+      <nav className="telegram-nav" aria-label="Навигация приложения">
+        <a href="#portfolio"><span>▣</span>Портфель</a>
+        <a href="#market"><span>◔</span>Рынок</a>
+        <a href="#coupons"><span>₽</span>Купоны</a>
+        <a href="#ai"><span>✦</span>AI</a>
+      </nav>
 
       {selectedInstrument && (
         <div className="modal-backdrop" onClick={() => setSelectedInstrument(null)}>
@@ -236,6 +260,24 @@ function App() {
             <div className="modal-total"><span>Сумма</span><strong>{((Number(quantity) || 0) * (Number(buyPrice) || 0)).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
             <button className="modal-submit" type="submit">Добавить актив</button>
           </form>
+        </div>
+      )}
+
+      {showAdvice && (
+        <div className="modal-backdrop" onClick={() => setShowAdvice(false)}>
+          <section className="asset-modal advice-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setShowAdvice(false)} aria-label="Закрыть">×</button>
+            <span className="advice-orb">✦</span>
+            <p className="eyebrow">AI-АНАЛИЗ</p>
+            <h2>Разбор портфеля</h2>
+            <p className="advice-text">{advice}</p>
+            <div className="advice-metrics">
+              <div><span>Позиций</span><strong>{portfolioItems.length}</strong></div>
+              <div><span>Результат</span><strong className={profit >= 0 ? 'up' : 'down'}>{profit >= 0 ? '+' : ''}{profit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽</strong></div>
+            </div>
+            <p className="advice-disclaimer">Демонстрационный анализ, не инвестиционная рекомендация.</p>
+            <button className="modal-submit" type="button" onClick={() => setShowAdvice(false)}>Понятно</button>
+          </section>
         </div>
       )}
     </div>
