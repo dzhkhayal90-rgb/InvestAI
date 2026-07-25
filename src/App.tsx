@@ -7,6 +7,10 @@ type TelegramWebApp = {
   initDataUnsafe?: { user?: { first_name?: string } }
   themeParams?: { bg_color?: string }
   HapticFeedback?: { impactOccurred: (style: 'light' | 'medium' | 'heavy') => void }
+  CloudStorage?: {
+    getItems: (keys: string[], callback: (error: string | null, values?: Record<string, string>) => void) => void
+    setItem: (key: string, value: string, callback?: (error: string | null, stored?: boolean) => void) => void
+  }
 }
 
 declare global {
@@ -72,7 +76,7 @@ type CashFlow = {
 }
 
 type Currency = 'RUB' | 'USD' | 'EUR'
-type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai'
+type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics'
 
 const lessons = [
   { title: 'Как собрать первый портфель', time: '3 минуты', text: 'Начните с цели и срока. Для умеренного портфеля можно сочетать акции крупных компаний и облигации. Не вкладывайте все деньги в одну бумагу и сохраняйте финансовую подушку отдельно.' },
@@ -182,13 +186,18 @@ function App() {
   const [marketStatus, setMarketStatus] = useState<'loading' | 'live' | 'error'>('loading')
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
   const [marketQuery, setMarketQuery] = useState('')
+  const [homeSearch, setHomeSearch] = useState('')
   const [marketFilter, setMarketFilter] = useState<'Все' | Instrument['category']>('Все')
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [marketSort, setMarketSort] = useState<'name' | 'growth' | 'decline' | 'price'>('name')
   const [visibleCount, setVisibleCount] = useState(20)
   const [resultPeriod, setResultPeriod] = useState<'today' | 'all'>('today')
   const [activeSection, setActiveSection] = useState<AppSection>('portfolio')
   const [currency, setCurrency] = useState<Currency>(() => (localStorage.getItem('investai-currency') as Currency | null) ?? 'RUB')
   const [currencyRates, setCurrencyRates] = useState<Record<Currency, number>>({ RUB: 1, USD: 90, EUR: 98 })
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => localStorage.getItem('investai-theme') === 'light' ? 'light' : 'dark')
+  const [cloudReady, setCloudReady] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<'local' | 'syncing' | 'synced'>('local')
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
     const saved = localStorage.getItem('investai-portfolio')
     if (!saved) return {}
@@ -246,7 +255,8 @@ function App() {
   const filteredInstruments = useMemo(() => {
     const query = marketQuery.trim().toLocaleLowerCase('ru')
     const filtered = instruments.filter((instrument) => {
-      const matchesFilter = marketFilter === 'Все' || instrument.category === marketFilter
+      const matchesFilter = (marketFilter === 'Все' || instrument.category === marketFilter)
+        && (!favoritesOnly || favorites.includes(instrument.ticker))
       const matchesQuery = !query || `${instrument.ticker} ${instrument.name}`.toLocaleLowerCase('ru').includes(query)
       return matchesFilter && matchesQuery
     })
@@ -256,7 +266,7 @@ function App() {
       if (marketSort === 'price') return b.valuePrice - a.valuePrice
       return a.name.localeCompare(b.name, 'ru')
     })
-  }, [instruments, marketFilter, marketQuery, marketSort])
+  }, [favorites, favoritesOnly, instruments, marketFilter, marketQuery, marketSort])
   const portfolioValue = useMemo(
     () => portfolioItems.reduce((sum, instrument) => sum + instrument.valuePrice * portfolio[instrument.ticker].quantity, 0),
     [portfolio, portfolioItems],
@@ -583,6 +593,10 @@ function App() {
   }, [currency])
 
   useEffect(() => {
+    localStorage.setItem('investai-theme', theme)
+  }, [theme])
+
+  useEffect(() => {
     const loadCurrencyRates = async () => {
       try {
         const response = await fetch('https://www.cbr-xml-daily.ru/daily_json.js')
@@ -605,7 +619,55 @@ function App() {
     webApp.expand()
     setName(webApp.initDataUnsafe?.user?.first_name ?? 'инвестор')
     setIsTelegram(true)
+    const storage = webApp.CloudStorage
+    if (!storage) {
+      setCloudReady(true)
+      return
+    }
+    const keys = ['portfolio', 'favorites', 'cashflows', 'operations', 'history', 'settings']
+    storage.getItems(keys, (error, values) => {
+      if (!error && values) {
+        try {
+          if (values.portfolio) setPortfolio(JSON.parse(values.portfolio) as Record<string, Position>)
+          if (values.favorites) setFavorites(JSON.parse(values.favorites) as string[])
+          if (values.cashflows) setCashFlows(JSON.parse(values.cashflows) as CashFlow[])
+          if (values.operations) setOperations(JSON.parse(values.operations) as Operation[])
+          if (values.history) setPortfolioHistory(JSON.parse(values.history) as PortfolioSnapshot[])
+          if (values.settings) {
+            const settings = JSON.parse(values.settings) as { goal?: number; goalMonths?: number; currency?: Currency; theme?: 'dark' | 'light'; completedLessons?: string[] }
+            if (typeof settings.goal === 'number') setInvestmentGoal(settings.goal)
+            if (typeof settings.goalMonths === 'number') setGoalMonths(settings.goalMonths)
+            if (settings.currency) setCurrency(settings.currency)
+            if (settings.theme) setTheme(settings.theme)
+            if (settings.completedLessons) setCompletedLessons(settings.completedLessons)
+          }
+          setSyncStatus('synced')
+        } catch {
+          setSyncStatus('local')
+        }
+      }
+      setCloudReady(true)
+    })
   }, [])
+
+  useEffect(() => {
+    const storage = window.Telegram?.WebApp?.CloudStorage
+    if (!isTelegram || !cloudReady || !storage) return
+    setSyncStatus('syncing')
+    const timer = window.setTimeout(() => {
+      const values: Record<string, unknown> = {
+        portfolio,
+        favorites,
+        cashflows: cashFlows.slice(0, 100),
+        operations: operations.slice(0, 25),
+        history: portfolioHistory.slice(-30),
+        settings: { goal: investmentGoal, goalMonths, currency, theme, completedLessons },
+      }
+      Object.entries(values).forEach(([key, value]) => storage.setItem(key, JSON.stringify(value)))
+      setSyncStatus('synced')
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [cashFlows, cloudReady, completedLessons, currency, favorites, goalMonths, investmentGoal, isTelegram, operations, portfolio, portfolioHistory, theme])
 
   useEffect(() => {
     let active = true
@@ -639,10 +701,18 @@ function App() {
 
   useEffect(() => {
     setVisibleCount(20)
-  }, [marketFilter, marketQuery])
+  }, [favoritesOnly, marketFilter, marketQuery])
+
+  const submitHomeSearch = () => {
+    const query = homeSearch.trim()
+    if (!query) return
+    setMarketQuery(query)
+    setFavoritesOnly(false)
+    setActiveSection('market')
+  }
 
   return (
-    <div className={isTelegram ? 'telegram-app' : undefined}>
+    <div className={`${isTelegram ? 'telegram-app' : ''} theme-${theme}`}>
       <header className="topbar">
         <a className="brand" href="#">
           <img className="brand-mark" src={`${import.meta.env.BASE_URL}investai-logo.png`} alt="InvestAI" />
@@ -653,6 +723,7 @@ function App() {
         <nav className="site-nav" aria-label="Навигация">
           {sections.map((section) => <a href={section.href} key={section.href}>{section.label}</a>)}
         </nav>
+        {isTelegram && <div className="telegram-header-actions"><span className={`sync-dot ${syncStatus}`}>{syncStatus === 'synced' ? '☁' : '•'}</span><button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label="Переключить тему">{theme === 'dark' ? '☀' : '☾'}</button></div>}
         <a className="header-button" href="#market">Начать</a>
       </header>
 
@@ -673,6 +744,11 @@ function App() {
             <p>динамика портфеля</p>
           </div>
         </section>
+
+        <form className="home-search" onSubmit={(event) => { event.preventDefault(); submitHomeSearch() }}>
+          <span>⌕</span>
+          <input value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Бумага, компания или тикер" aria-label="Поиск по рынку" />
+        </form>
 
         <section className="dashboard-grid" id="portfolio">
           <div>
@@ -709,9 +785,12 @@ function App() {
                 {dividends > 0 && <span><small>Дивиденды</small><strong>{formatMoney(dividends)}</strong></span>}
               </div>
             )}
-            {isTelegram
-              ? <div className="portfolio-actions"><button className="primary-button" type="button" onClick={() => setActiveSection('market')}>＋ Актив</button><button className="primary-button secondary-action" type="button" onClick={() => setShowCashFlow(true)}>₽ Деньги</button><button className="primary-button secondary-action operations-action" type="button" onClick={() => setShowOperations(true)}>Операции</button></div>
-              : <a className="primary-button" href="#market">＋ Добавить актив</a>}
+            {isTelegram ? <div className="dashboard-actions">
+              <button type="button" onClick={() => { setCashFlowType('Пополнение'); setShowCashFlow(true) }}><span>＋</span>Пополнить</button>
+              <button type="button" onClick={() => setShowOperations(true)}><span>◷</span>Операции</button>
+              <button type="button" onClick={() => setActiveSection('analytics')}><span>◔</span>Аналитика</button>
+              <button type="button" onClick={() => { setFavoritesOnly(true); setMarketQuery(''); setMarketFilter('Все'); setActiveSection('market') }}><span>★</span>Избранное</button>
+            </div> : <a className="primary-button" href="#market">＋ Добавить актив</a>}
           </article>
           <div className="quick-stats">
             <article><span className="stat-icon pink">₽</span><div><p>Ближайшие купоны</p><strong>{portfolioBonds.length ? `${expectedCoupons.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : 'Добавьте облигации'}</strong></div></article>
@@ -825,7 +904,7 @@ function App() {
               <button
                 className={marketFilter === filter ? 'active' : undefined}
                 key={filter}
-                onClick={() => setMarketFilter(filter)}
+                onClick={() => { setMarketFilter(filter); setFavoritesOnly(false) }}
                 type="button"
               >
                 {filter}
@@ -842,7 +921,7 @@ function App() {
             </select>
           </label>
           <p className="catalog-count">
-            {marketStatus === 'loading' ? 'Загружаем каталог…' : `Найдено: ${filteredInstruments.length}`}
+            {marketStatus === 'loading' ? 'Загружаем каталог…' : `${favoritesOnly ? 'Избранное' : 'Найдено'}: ${filteredInstruments.length}`}
           </p>
         </div>
         {favoriteItems.length > 0 && !marketQuery && marketFilter === 'Все' && (
@@ -904,6 +983,35 @@ function App() {
             : bond.couponValue ?? 0
           return <button className="coupon-row coupon-button" type="button" onClick={() => setDetailInstrument(bond)} key={bond.ticker}><span>₽</span><div><strong>{bond.name}</strong><p>{portfolio[bond.ticker] ? `${portfolio[bond.ticker].quantity} шт. · ${bond.ticker}` : bond.ticker}</p></div><div><strong>{amount.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong><p>{bond.date}</p></div></button>
         })}
+      </section>
+
+      <section className="analytics-section" id="analytics">
+        <div className="analytics-title"><button type="button" onClick={() => setActiveSection('portfolio')} aria-label="Назад">‹</button><div><p className="eyebrow">ВАШ ПОРТФЕЛЬ</p><h2>Аналитика</h2></div></div>
+        <article className="analytics-card">
+          <div className="analytics-value"><div><strong>{formatMoney(portfolioValue, 2)}</strong><span>Стоимость портфеля</span></div><span>{currency === 'RUB' ? '₽' : currency === 'USD' ? '$' : '€'}</span></div>
+          {portfolioHistory.length > 1 ? <svg className="analytics-chart" viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Динамика стоимости портфеля"><polygon points={`0,48 ${chartPoints} 100,48`} fill="rgba(76,132,255,.2)" /><polyline points={chartPoints} fill="none" stroke="#66a0ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : <div className="analytics-empty-chart"><span>◒</span><p>График появится после второго дневного значения портфеля</p></div>}
+          <div className="analytics-periods"><button>День</button><button>Месяц</button><button>6 мес</button><button className="active">Всё время</button></div>
+          <div className="income-list">
+            <div><span>Общий доход</span><strong className={profit >= 0 ? 'up' : 'down'}>{profit >= 0 ? '+' : ''}{formatMoney(profit, 2)} · {profitPercent.toFixed(2)}%</strong></div>
+            <div><span>Доход от изменения цены</span><strong className={marketProfit >= 0 ? 'up' : 'down'}>{marketProfit >= 0 ? '+' : ''}{formatMoney(marketProfit, 2)}</strong></div>
+            <div><span>Дивиденды</span><strong className="up">+{formatMoney(dividends, 2)}</strong></div>
+          </div>
+        </article>
+        <article className="analytics-card">
+          <div className="analytics-card-head"><div><h3>Будущие выплаты</h3><p>{paymentEvents.reduce((sum, payment) => sum + payment.amount, 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ всего</p></div><button type="button" onClick={() => setActiveSection('coupons')}>Все</button></div>
+          {paymentMonths.length ? <div className="payments-bars">{paymentMonths.slice(0, 7).map(([month, payments]) => {
+            const amount = payments.reduce((sum, payment) => sum + payment.amount, 0)
+            const max = Math.max(...paymentMonths.map(([, values]) => values.reduce((sum, payment) => sum + payment.amount, 0)))
+            return <div key={month}><small>{amount >= 1000 ? `${(amount / 1000).toFixed(1)}к` : amount.toFixed(0)}</small><i style={{ height: `${Math.max(8, amount / max * 100)}%` }} /><span>{new Date(`${month}-01`).toLocaleDateString('ru-RU', { month: 'short' })}</span></div>
+          })}</div> : <div className="analytics-empty-chart compact"><p>Добавьте облигации или дивиденды, чтобы увидеть прогноз выплат.</p></div>}
+        </article>
+        <article className="analytics-card">
+          <div className="analytics-card-head"><div><h3>Структура портфеля</h3><p>По отдельным активам</p></div></div>
+          {portfolioItems.length ? <div className="analytics-allocation">
+            <div className="donut-chart large" style={{ background: `conic-gradient(${allocationGradient})` }}><span>{formatMoney(portfolioValue)}<small>{portfolioItems.length} активов</small></span></div>
+            <div className="holdings-legend">{allocationItems.slice(0, 6).map((item, index) => <div key={item.instrument.ticker}><i style={{ background: allocationColors[index % allocationColors.length] }} /><span>{item.instrument.ticker}</span><strong>{item.share.toFixed(1)}%</strong></div>)}</div>
+          </div> : <div className="analytics-empty-chart compact"><p>Добавьте активы, чтобы увидеть структуру портфеля.</p></div>}
+        </article>
       </section>
 
       <section className="ai-section" id="ai">
