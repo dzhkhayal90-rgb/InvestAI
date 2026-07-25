@@ -206,7 +206,12 @@ function App() {
   const [showGoal, setShowGoal] = useState(false)
   const [goalInput, setGoalInput] = useState('')
   const [investmentGoal, setInvestmentGoal] = useState(() => Number(localStorage.getItem('investai-goal')) || 0)
+  const [goalMonths, setGoalMonths] = useState(() => Number(localStorage.getItem('investai-goal-months')) || 24)
   const [selectedLesson, setSelectedLesson] = useState<(typeof lessons)[number] | null>(null)
+  const [completedLessons, setCompletedLessons] = useState<string[]>(() => {
+    const saved = localStorage.getItem('investai-completed-lessons')
+    return saved ? JSON.parse(saved) as string[] : []
+  })
   const [operations, setOperations] = useState<Operation[]>(() => {
     const saved = localStorage.getItem('investai-operations')
     return saved ? JSON.parse(saved) as Operation[] : []
@@ -280,6 +285,26 @@ function App() {
     (sum, bond) => sum + (bond.couponValue ?? 0) * portfolio[bond.ticker].quantity,
     0,
   )
+  const monthlyGoalContribution = investmentGoal
+    ? Math.max(0, investmentGoal - portfolioValue) / Math.max(1, goalMonths)
+    : 0
+  const improvementSteps = [
+    {
+      done: portfolioItems.length >= 3,
+      title: 'Добавить минимум 3 бумаги',
+      text: portfolioItems.length >= 3 ? `${portfolioItems.length} активов в портфеле` : `Сейчас ${portfolioItems.length} из 3`,
+    },
+    {
+      done: largestPositionShare <= 50 && portfolioItems.length > 1,
+      title: 'Снизить концентрацию',
+      text: portfolioItems.length ? `Крупнейшая позиция — ${largestPositionShare.toFixed(0)}%` : 'Одна бумага — не более 50%',
+    },
+    {
+      done: stockShare >= 20 && stockShare <= 80 && portfolioItems.length > 1,
+      title: 'Сбалансировать типы активов',
+      text: portfolioItems.length ? `Акции ${stockShare.toFixed(0)}% · облигации ${(100 - stockShare).toFixed(0)}%` : 'Добавьте акции и облигации',
+    },
+  ]
   const chartValues = portfolioHistory.map((point) => point.value)
   const chartMin = chartValues.length ? Math.min(...chartValues) : 0
   const chartMax = chartValues.length ? Math.max(...chartValues) : 0
@@ -379,6 +404,8 @@ function App() {
       favorites,
       operations,
       investmentGoal,
+      goalMonths,
+      completedLessons,
       portfolioHistory,
     }, null, 2)
     const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
@@ -397,12 +424,16 @@ function App() {
         favorites?: string[]
         operations?: Operation[]
         investmentGoal?: number
+        goalMonths?: number
+        completedLessons?: string[]
         portfolioHistory?: PortfolioSnapshot[]
       }
       if (data.portfolio) setPortfolio(data.portfolio)
       if (data.favorites) setFavorites(data.favorites)
       if (data.operations) setOperations(data.operations)
       if (typeof data.investmentGoal === 'number') setInvestmentGoal(data.investmentGoal)
+      if (typeof data.goalMonths === 'number') setGoalMonths(data.goalMonths)
+      if (data.completedLessons) setCompletedLessons(data.completedLessons)
       if (data.portfolioHistory) setPortfolioHistory(data.portfolioHistory)
       setNotice('Резервная копия восстановлена')
       setShowOperations(false)
@@ -426,6 +457,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem('investai-goal', String(investmentGoal))
   }, [investmentGoal])
+
+  useEffect(() => {
+    localStorage.setItem('investai-goal-months', String(goalMonths))
+  }, [goalMonths])
+
+  useEffect(() => {
+    localStorage.setItem('investai-completed-lessons', JSON.stringify(completedLessons))
+  }, [completedLessons])
 
   useEffect(() => {
     if (!portfolioItems.length) return
@@ -702,6 +741,22 @@ function App() {
             {marketStatus === 'loading' ? 'Загружаем каталог…' : `Найдено: ${filteredInstruments.length}`}
           </p>
         </div>
+        {favoriteItems.length > 0 && !marketQuery && marketFilter === 'Все' && (
+          <div className="favorites-strip">
+            <div className="favorites-head"><strong>★ Избранное</strong><span>{favoriteItems.length}</span></div>
+            <div className="favorites-scroll">
+              {favoriteItems.map((instrument) => (
+                <button type="button" key={instrument.ticker} onClick={() => setDetailInstrument(instrument)}>
+                  <span>{instrument.ticker}</span>
+                  <strong>{formatPrice(instrument)}</strong>
+                  <small className={(instrument.change ?? 0) >= 0 ? 'up' : 'down'}>
+                    {instrument.change !== undefined ? `${instrument.change >= 0 ? '+' : ''}${instrument.change}%` : instrument.coupon}
+                  </small>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="market-list">
           {filteredInstruments.slice(0, visibleCount).map((instrument) => (
             <article className="market-row" key={instrument.ticker}>
@@ -754,11 +809,22 @@ function App() {
           <article><span>◉</span><div><small>Уровень риска</small><strong>{portfolioItems.length ? riskLevel : 'Нет данных'}</strong></div></article>
           <article><span>◎</span><div><small>Диверсификация</small><strong>{portfolioItems.length ? `${diversificationScore}/100` : 'Добавьте активы'}</strong></div></article>
         </div>
+        <article className="checklist-card">
+          <div className="goal-head"><div><p className="eyebrow">ПЛАН УЛУЧШЕНИЯ</p><h3>{improvementSteps.filter((step) => step.done).length} из {improvementSteps.length} выполнено</h3></div><span className="checklist-score">{diversificationScore}</span></div>
+          <div className="checklist-track"><span style={{ width: `${improvementSteps.filter((step) => step.done).length / improvementSteps.length * 100}%` }} /></div>
+          <div className="checklist-list">
+            {improvementSteps.map((step) => <div className={step.done ? 'done' : ''} key={step.title}><span>{step.done ? '✓' : '○'}</span><div><strong>{step.title}</strong><small>{step.text}</small></div></div>)}
+          </div>
+        </article>
         <article className="goal-card">
           <div className="goal-head"><div><p className="eyebrow">ВАША ЦЕЛЬ</p><h3>{investmentGoal ? formatMoney(investmentGoal) : 'Создайте финансовую цель'}</h3></div><button type="button" onClick={() => { setGoalInput(investmentGoal ? String(investmentGoal) : ''); setShowGoal(true) }}>{investmentGoal ? 'Изменить' : 'Добавить'}</button></div>
           {investmentGoal ? <>
             <div className="goal-track"><span style={{ width: `${Math.min(100, portfolioValue / investmentGoal * 100)}%` }} /></div>
             <p>Накоплено {Math.min(100, portfolioValue / investmentGoal * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}% · осталось {formatMoney(Math.max(0, investmentGoal - portfolioValue))}</p>
+            <div className="goal-plan">
+              <div><small>Пополняйте ежемесячно</small><strong>{formatMoney(monthlyGoalContribution)}</strong></div>
+              <label><span>Срок</span><select value={goalMonths} onChange={(event) => setGoalMonths(Number(event.target.value))}><option value="6">6 месяцев</option><option value="12">1 год</option><option value="24">2 года</option><option value="36">3 года</option><option value="60">5 лет</option></select></label>
+            </div>
           </> : <p>Укажите сумму — InvestAI будет показывать прогресс вашего портфеля.</p>}
         </article>
         <article className="history-card">
@@ -772,11 +838,11 @@ function App() {
             <div className="chart-labels"><span>{new Date(portfolioHistory[0].date).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })}</span><strong>{formatMoney(portfolioHistory.at(-1)?.value ?? 0)}</strong><span>{new Date(portfolioHistory.at(-1)!.date).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })}</span></div>
           </> : <p className="history-empty">Первое значение сохранено. График появится после следующего дневного обновления.</p>}
         </article>
-        <div className="section-heading ai-lessons-head"><div><p className="eyebrow">БАЗА ЗНАНИЙ</p><h2>Короткие уроки</h2></div></div>
+        <div className="section-heading ai-lessons-head"><div><p className="eyebrow">БАЗА ЗНАНИЙ</p><h2>Короткие уроки</h2></div><span className="lesson-progress">{completedLessons.length}/{lessons.length}</span></div>
         <div className="lesson-list">
           {lessons.map((lesson, index) => (
-            <button type="button" onClick={() => setSelectedLesson(lesson)} key={lesson.title}>
-              <span>{index + 1}</span>
+            <button className={completedLessons.includes(lesson.title) ? 'completed' : ''} type="button" onClick={() => setSelectedLesson(lesson)} key={lesson.title}>
+              <span>{completedLessons.includes(lesson.title) ? '✓' : index + 1}</span>
               <div><strong>{lesson.title}</strong><small>{lesson.time}</small></div>
               <i>›</i>
             </button>
@@ -878,7 +944,10 @@ function App() {
             <h2>{selectedLesson.title}</h2>
             <p className="advice-text">{selectedLesson.text}</p>
             <p className="advice-disclaimer">Материал носит образовательный характер и не является инвестиционной рекомендацией.</p>
-            <button className="modal-submit" type="button" onClick={() => setSelectedLesson(null)}>Понятно</button>
+            <button className="modal-submit" type="button" onClick={() => {
+              setCompletedLessons((current) => current.includes(selectedLesson.title) ? current : [...current, selectedLesson.title])
+              setSelectedLesson(null)
+            }}>{completedLessons.includes(selectedLesson.title) ? 'Урок пройден ✓' : 'Отметить как пройденный'}</button>
           </section>
         </div>
       )}
