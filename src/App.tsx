@@ -47,6 +47,16 @@ type Position = {
   buyPrice: number
 }
 
+type Operation = {
+  id: string
+  ticker: string
+  name: string
+  type: 'Покупка' | 'Изменение' | 'Удаление'
+  quantity: number
+  price: number
+  date: string
+}
+
 type Currency = 'RUB' | 'USD' | 'EUR'
 type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai'
 
@@ -54,6 +64,15 @@ const lessons = [
   { title: 'Как собрать первый портфель', time: '3 минуты', text: 'Начните с цели и срока. Для умеренного портфеля можно сочетать акции крупных компаний и облигации. Не вкладывайте все деньги в одну бумагу и сохраняйте финансовую подушку отдельно.' },
   { title: 'Что такое диверсификация', time: '2 минуты', text: 'Диверсификация — распределение денег между разными активами. Она снижает зависимость портфеля от одной компании или отрасли, но не исключает риск полностью.' },
   { title: 'Как читать доходность', time: '3 минуты', text: 'Доходность показывает изменение стоимости относительно цены покупки. Результат за день отражает движение рынка сегодня, а результат за всё время — прибыль или убыток с момента покупки.' },
+  { title: 'Акции и облигации: разница', time: '4 минуты', text: 'Акция даёт долю в компании и обычно сильнее меняется в цене. Облигация — это долг эмитента с заранее определёнными выплатами. Их сочетание помогает управлять риском.' },
+  { title: 'Зачем нужна финансовая подушка', time: '2 минуты', text: 'Перед инвестициями сформируйте запас денег на несколько месяцев расходов. Тогда вам не придётся продавать активы в неудачный момент из-за срочной потребности в деньгах.' },
+  { title: 'Что такое ребалансировка', time: '3 минуты', text: 'Ребалансировка возвращает доли активов к выбранной структуре. Обычно достаточно проверять портфель несколько раз в год, а не реагировать на каждое движение рынка.' },
+]
+
+const usefulTips = [
+  'Не вкладывайте в один актив больше той суммы, потерю которой сможете спокойно пережить.',
+  'Сравнивайте доходность портфеля с вашей целью, а не с чужими результатами.',
+  'Проверяйте комиссии и налоги — они влияют на итоговую доходность.',
 ]
 
 const fallbackInstruments: Instrument[] = [
@@ -178,7 +197,12 @@ function App() {
   const [quantity, setQuantity] = useState('1')
   const [buyPrice, setBuyPrice] = useState('')
   const [showAdvice, setShowAdvice] = useState(false)
+  const [showOperations, setShowOperations] = useState(false)
   const [selectedLesson, setSelectedLesson] = useState<(typeof lessons)[number] | null>(null)
+  const [operations, setOperations] = useState<Operation[]>(() => {
+    const saved = localStorage.getItem('investai-operations')
+    return saved ? JSON.parse(saved) as Operation[] : []
+  })
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
   const favoriteItems = instruments.filter((instrument) => favorites.includes(instrument.ticker))
@@ -286,8 +310,38 @@ function App() {
       return { ...current, [selectedInstrument.ticker]: { quantity: totalQuantity, buyPrice: averagePrice } }
     })
     setNotice(editingPosition ? `${selectedInstrument.ticker} обновлён` : `${selectedInstrument.ticker} добавлен в портфель`)
+    const operation: Operation = {
+      id: `${Date.now()}-${selectedInstrument.ticker}`,
+      ticker: selectedInstrument.ticker,
+      name: selectedInstrument.name,
+      type: editingPosition ? 'Изменение' : 'Покупка',
+      quantity: amount,
+      price,
+      date: new Date().toISOString(),
+    }
+    setOperations((current) => [operation, ...current].slice(0, 100))
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium')
     setSelectedInstrument(null)
+  }
+
+  const removeInstrument = (instrument: Instrument) => {
+    const removed = portfolio[instrument.ticker]
+    if (!removed) return
+    setPortfolio((current) => {
+      const next = { ...current }
+      delete next[instrument.ticker]
+      return next
+    })
+    const operation: Operation = {
+      id: `${Date.now()}-${instrument.ticker}`,
+      ticker: instrument.ticker,
+      name: instrument.name,
+      type: 'Удаление',
+      quantity: removed.quantity,
+      price: removed.buyPrice,
+      date: new Date().toISOString(),
+    }
+    setOperations((items) => [operation, ...items].slice(0, 100))
   }
 
   useEffect(() => {
@@ -297,6 +351,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('investai-favorites', JSON.stringify(favorites))
   }, [favorites])
+
+  useEffect(() => {
+    localStorage.setItem('investai-operations', JSON.stringify(operations))
+  }, [operations])
 
   useEffect(() => {
     localStorage.setItem('investai-currency', currency)
@@ -429,7 +487,7 @@ function App() {
               </div>
             )}
             {isTelegram
-              ? <button className="primary-button" type="button" onClick={() => setActiveSection('market')}>＋ Добавить актив</button>
+              ? <div className="portfolio-actions"><button className="primary-button" type="button" onClick={() => setActiveSection('market')}>＋ Добавить</button><button className="primary-button secondary-action" type="button" onClick={() => setShowOperations(true)}>Операции</button></div>
               : <a className="primary-button" href="#market">＋ Добавить актив</a>}
           </article>
           <div className="quick-stats">
@@ -487,11 +545,7 @@ function App() {
                     return <small className={positionProfit >= 0 ? 'up' : 'down'}>{resultPeriod === 'today' ? 'Сегодня ' : ''}{positionProfit >= 0 ? '+' : ''}{formatMoney(positionProfit, 2)} · {positionPercent >= 0 ? '+' : ''}{positionPercent.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%</small>
                   })()}
                 </div>
-                <button className="remove-button" onClick={() => setPortfolio((current) => {
-                  const next = { ...current }
-                  delete next[instrument.ticker]
-                  return next
-                })} aria-label={`Удалить ${instrument.name}`}>×</button>
+                <button className="remove-button" onClick={() => removeInstrument(instrument)} aria-label={`Удалить ${instrument.name}`}>×</button>
               </article>
             ))}
           </div>
@@ -624,6 +678,10 @@ function App() {
             </button>
           ))}
         </div>
+        <div className="section-heading ai-lessons-head"><div><p className="eyebrow">ПОЛЕЗНО ПОМНИТЬ</p><h2>Советы</h2></div></div>
+        <div className="tips-list">
+          {usefulTips.map((tip) => <article key={tip}><span>✓</span><p>{tip}</p></article>)}
+        </div>
       </section>
 
       </main>
@@ -717,6 +775,24 @@ function App() {
             <p className="advice-text">{selectedLesson.text}</p>
             <p className="advice-disclaimer">Материал носит образовательный характер и не является инвестиционной рекомендацией.</p>
             <button className="modal-submit" type="button" onClick={() => setSelectedLesson(null)}>Понятно</button>
+          </section>
+        </div>
+      )}
+
+      {showOperations && (
+        <div className="modal-backdrop" onClick={() => setShowOperations(false)}>
+          <section className="asset-modal operations-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setShowOperations(false)} aria-label="Закрыть">×</button>
+            <p className="eyebrow">ИСТОРИЯ</p>
+            <h2>Операции</h2>
+            <p className="modal-caption">Последние изменения портфеля сохраняются на этом устройстве.</p>
+            {operations.length ? <div className="operations-list">{operations.map((operation) => (
+              <article key={operation.id}>
+                <span className={`operation-icon operation-${operation.type.toLocaleLowerCase('ru')}`}>{operation.type === 'Покупка' ? '+' : operation.type === 'Удаление' ? '−' : '↻'}</span>
+                <div><strong>{operation.ticker}</strong><small>{operation.type} · {new Date(operation.date).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</small></div>
+                <div><strong>{operation.quantity} шт.</strong><small>{operation.price.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</small></div>
+              </article>
+            ))}</div> : <div className="catalog-empty">Операций пока нет. Добавьте первый актив.</div>}
           </section>
         </div>
       )}
