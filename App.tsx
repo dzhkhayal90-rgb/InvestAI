@@ -245,8 +245,11 @@ function App() {
     <div className={isTelegram ? 'telegram-app' : undefined}>
       <header className="topbar">
         <a className="brand" href="#">
-          <span className="brand-mark">I</span>
-          <span>{isTelegram ? `Привет, ${name}` : 'InvestAI'}</span>
+          <img className="brand-mark" src="./logo.svg" alt="" />
+          <span className="brand-copy">
+            <strong>InvestAI</strong>
+            <small>{isTelegram ? `Привет, ${name}` : 'умные инвестиции'}</small>
+          </span>
         </a>
         <nav className="site-nav" aria-label="Навигация">
           {sections.map((section) => <a href={section.href} key={section.href}>{section.label}</a>)}
