@@ -57,6 +57,11 @@ type Operation = {
   date: string
 }
 
+type PortfolioSnapshot = {
+  date: string
+  value: number
+}
+
 type Currency = 'RUB' | 'USD' | 'EUR'
 type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai'
 
@@ -206,6 +211,10 @@ function App() {
     const saved = localStorage.getItem('investai-operations')
     return saved ? JSON.parse(saved) as Operation[] : []
   })
+  const [portfolioHistory, setPortfolioHistory] = useState<PortfolioSnapshot[]>(() => {
+    const saved = localStorage.getItem('investai-history')
+    return saved ? JSON.parse(saved) as PortfolioSnapshot[] : []
+  })
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
   const favoriteItems = instruments.filter((instrument) => favorites.includes(instrument.ticker))
@@ -271,6 +280,15 @@ function App() {
     (sum, bond) => sum + (bond.couponValue ?? 0) * portfolio[bond.ticker].quantity,
     0,
   )
+  const chartValues = portfolioHistory.map((point) => point.value)
+  const chartMin = chartValues.length ? Math.min(...chartValues) : 0
+  const chartMax = chartValues.length ? Math.max(...chartValues) : 0
+  const chartRange = Math.max(1, chartMax - chartMin)
+  const chartPoints = portfolioHistory.map((point, index) => {
+    const x = portfolioHistory.length > 1 ? index / (portfolioHistory.length - 1) * 100 : 50
+    const y = 38 - (point.value - chartMin) / chartRange * 32
+    return `${x},${y}`
+  }).join(' ')
 
   const advice = portfolioItems.length === 0
     ? 'Добавьте хотя бы две бумаги — после этого я оценю структуру портфеля.'
@@ -361,6 +379,7 @@ function App() {
       favorites,
       operations,
       investmentGoal,
+      portfolioHistory,
     }, null, 2)
     const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
     const link = document.createElement('a')
@@ -378,11 +397,13 @@ function App() {
         favorites?: string[]
         operations?: Operation[]
         investmentGoal?: number
+        portfolioHistory?: PortfolioSnapshot[]
       }
       if (data.portfolio) setPortfolio(data.portfolio)
       if (data.favorites) setFavorites(data.favorites)
       if (data.operations) setOperations(data.operations)
       if (typeof data.investmentGoal === 'number') setInvestmentGoal(data.investmentGoal)
+      if (data.portfolioHistory) setPortfolioHistory(data.portfolioHistory)
       setNotice('Резервная копия восстановлена')
       setShowOperations(false)
     } catch {
@@ -405,6 +426,21 @@ function App() {
   useEffect(() => {
     localStorage.setItem('investai-goal', String(investmentGoal))
   }, [investmentGoal])
+
+  useEffect(() => {
+    if (!portfolioItems.length) return
+    const today = new Date().toISOString().slice(0, 10)
+    setPortfolioHistory((current) => {
+      const next = current.some((point) => point.date === today)
+        ? current.map((point) => point.date === today ? { ...point, value: portfolioValue } : point)
+        : [...current, { date: today, value: portfolioValue }]
+      return next.slice(-30)
+    })
+  }, [portfolioItems.length, portfolioValue])
+
+  useEffect(() => {
+    localStorage.setItem('investai-history', JSON.stringify(portfolioHistory))
+  }, [portfolioHistory])
 
   useEffect(() => {
     localStorage.setItem('investai-currency', currency)
@@ -724,6 +760,17 @@ function App() {
             <div className="goal-track"><span style={{ width: `${Math.min(100, portfolioValue / investmentGoal * 100)}%` }} /></div>
             <p>Накоплено {Math.min(100, portfolioValue / investmentGoal * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}% · осталось {formatMoney(Math.max(0, investmentGoal - portfolioValue))}</p>
           </> : <p>Укажите сумму — InvestAI будет показывать прогресс вашего портфеля.</p>}
+        </article>
+        <article className="history-card">
+          <div className="goal-head"><div><p className="eyebrow">ДИНАМИКА</p><h3>Стоимость портфеля</h3></div><small>30 дней</small></div>
+          {portfolioHistory.length > 1 ? <>
+            <svg className="portfolio-chart" viewBox="0 0 100 42" role="img" aria-label="График стоимости портфеля">
+              <defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#38d878" stopOpacity=".28" /><stop offset="1" stopColor="#38d878" stopOpacity="0" /></linearGradient></defs>
+              <polygon points={`0,42 ${chartPoints} 100,42`} fill="url(#chartFill)" />
+              <polyline points={chartPoints} fill="none" stroke="#38d878" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div className="chart-labels"><span>{new Date(portfolioHistory[0].date).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })}</span><strong>{formatMoney(portfolioHistory.at(-1)?.value ?? 0)}</strong><span>{new Date(portfolioHistory.at(-1)!.date).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })}</span></div>
+          </> : <p className="history-empty">Первое значение сохранено. График появится после следующего дневного обновления.</p>}
         </article>
         <div className="section-heading ai-lessons-head"><div><p className="eyebrow">БАЗА ЗНАНИЙ</p><h2>Короткие уроки</h2></div></div>
         <div className="lesson-list">
