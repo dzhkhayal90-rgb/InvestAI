@@ -719,10 +719,11 @@ function App() {
 
   useEffect(() => {
     const webApp = window.Telegram?.WebApp
-    if (!webApp) return
+    const telegramUser = webApp?.initDataUnsafe?.user
+    if (!webApp || !telegramUser) return
     webApp.ready()
     webApp.expand()
-    setName(webApp.initDataUnsafe?.user?.first_name ?? 'инвестор')
+    setName(telegramUser.first_name ?? 'инвестор')
     setIsTelegram(true)
     const storage = webApp.CloudStorage
     if (!storage) {
@@ -730,29 +731,35 @@ function App() {
       return
     }
     const keys = ['portfolio', 'favorites', 'cashflows', 'operations', 'history', 'settings']
-    storage.getItems(keys, (error, values) => {
-      if (!error && values) {
-        try {
+    try {
+      storage.getItems(keys, (error, values) => {
+        if (!error && values) {
+          try {
           if (values.portfolio) setPortfolio(JSON.parse(values.portfolio) as Record<string, Position>)
           if (values.favorites) setFavorites(JSON.parse(values.favorites) as string[])
           if (values.cashflows) setCashFlows(JSON.parse(values.cashflows) as CashFlow[])
           if (values.operations) setOperations(JSON.parse(values.operations) as Operation[])
           if (values.history) setPortfolioHistory(JSON.parse(values.history) as PortfolioSnapshot[])
           if (values.settings) {
-            const settings = JSON.parse(values.settings) as { goal?: number; goalMonths?: number; currency?: Currency; theme?: 'dark' | 'light'; completedLessons?: string[] }
+            const settings = JSON.parse(values.settings) as { goal?: number; goalMonths?: number; currency?: Currency; theme?: 'dark' | 'light'; completedLessons?: string[]; notificationsEnabled?: boolean }
             if (typeof settings.goal === 'number') setInvestmentGoal(settings.goal)
             if (typeof settings.goalMonths === 'number') setGoalMonths(settings.goalMonths)
             if (settings.currency) setCurrency(settings.currency)
             if (settings.theme) setTheme(settings.theme)
             if (settings.completedLessons) setCompletedLessons(settings.completedLessons)
+            if (typeof settings.notificationsEnabled === 'boolean') setNotificationsEnabled(settings.notificationsEnabled)
           }
           setSyncStatus('synced')
-        } catch {
-          setSyncStatus('local')
+          } catch {
+            setSyncStatus('local')
+          }
         }
-      }
-      setCloudReady(true)
-    })
+        setCloudReady(true)
+      })
+    } catch {
+      setSyncStatus('local')
+      setCloudReady(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -766,13 +773,17 @@ function App() {
         cashflows: cashFlows.slice(0, 100),
         operations: operations.slice(0, 25),
         history: portfolioHistory.slice(-365),
-        settings: { goal: investmentGoal, goalMonths, currency, theme, completedLessons },
+        settings: { goal: investmentGoal, goalMonths, currency, theme, completedLessons, notificationsEnabled },
       }
-      Object.entries(values).forEach(([key, value]) => storage.setItem(key, JSON.stringify(value)))
-      setSyncStatus('synced')
+      try {
+        Object.entries(values).forEach(([key, value]) => storage.setItem(key, JSON.stringify(value)))
+        setSyncStatus('synced')
+      } catch {
+        setSyncStatus('local')
+      }
     }, 700)
     return () => window.clearTimeout(timer)
-  }, [cashFlows, cloudReady, completedLessons, currency, favorites, goalMonths, investmentGoal, isTelegram, operations, portfolio, portfolioHistory, theme])
+  }, [cashFlows, cloudReady, completedLessons, currency, favorites, goalMonths, investmentGoal, isTelegram, notificationsEnabled, operations, portfolio, portfolioHistory, theme])
 
   useEffect(() => {
     let active = true
