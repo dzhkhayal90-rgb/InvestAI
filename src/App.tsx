@@ -94,6 +94,12 @@ type DetailTab = 'overview' | 'events' | 'income' | 'operations'
 type AnalyticsPeriod = 'day' | 'month' | 'sixMonths' | 'year' | 'all'
 type NewsFilter = 'Все' | 'Рынок' | 'Акции' | 'Облигации'
 type PriceAlert = { ticker: string; target: number; direction: 'above' | 'below'; createdAt: string }
+type DividendRecord = {
+  ticker: string
+  date: string
+  value: number
+  currency: string
+}
 
 const companyDomains: Record<string, string> = {
   SBER: 'sberbank.com', GAZP: 'gazprom.ru', LKOH: 'lukoil.ru', ROSN: 'rosneft.ru',
@@ -222,6 +228,21 @@ const loadMoexNews = async () => {
   }))
 }
 
+const loadMoexDividends = async (ticker: string): Promise<DividendRecord[]> => {
+  const response = await fetch(`https://iss.moex.com/iss/securities/${encodeURIComponent(ticker)}/dividends.json?iss.meta=off&iss.only=dividends&dividends.columns=registryclosedate,value,currencyid`)
+  if (!response.ok) throw new Error('MOEX dividends unavailable')
+  const payload = await response.json() as { dividends?: IssBlock }
+  return blockRows(payload.dividends)
+    .map((row) => ({
+      ticker,
+      date: String(row.registryclosedate ?? ''),
+      value: Number(row.value),
+      currency: String(row.currencyid ?? 'RUB'),
+    }))
+    .filter((item) => item.date && Number.isFinite(item.value) && item.value > 0)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+}
+
 function App() {
   const [name, setName] = useState('инвестор')
   const [isTelegram, setIsTelegram] = useState(false)
@@ -312,6 +333,7 @@ function App() {
     const saved = localStorage.getItem('investai-cash-flows')
     return saved ? JSON.parse(saved) as CashFlow[] : []
   })
+  const [dividendHistory, setDividendHistory] = useState<Record<string, DividendRecord[]>>({})
 
   const portfolioItems = instruments.filter((instrument) => portfolio[instrument.ticker])
   const favoriteItems = instruments.filter((instrument) => favorites.includes(instrument.ticker))
@@ -339,6 +361,15 @@ function App() {
     [portfolio, portfolioItems],
   )
   const dividends = cashFlows.filter((flow) => flow.type === 'Дивиденд').reduce((sum, flow) => sum + flow.amount, 0)
+  const todayKey = new Date().toISOString().slice(0, 10)
+  const portfolioDividendRecords = portfolioItems
+    .filter((item) => item.kind === 'Акция')
+    .flatMap((item) => (dividendHistory[item.ticker] ?? []).map((record) => ({
+      ...record,
+      name: item.name,
+      quantity: portfolio[item.ticker].quantity,
+    })))
+  const approvedDividends = portfolioDividendRecords.filter((item) => item.date >= todayKey)
   const marketProfit = portfolioValue - investedValue
   const realizedProfit = operations
     .filter((operation) => operation.type === 'Продажа')
@@ -426,6 +457,13 @@ function App() {
       title: flow.ticker || flow.note || 'Дивиденды',
       type: 'Дивиденд',
       amount: flow.amount,
+    })),
+    ...approvedDividends.map((dividend) => ({
+      id: `approved-dividend-${dividend.ticker}-${dividend.date}`,
+      date: new Date(`${dividend.date}T12:00:00`).toISOString(),
+      title: dividend.name,
+      type: 'Дивиденд',
+      amount: dividend.value * dividend.quantity,
     })),
   ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
   const paymentMonths = Object.entries(paymentEvents.reduce<Record<string, typeof paymentEvents>>((groups, payment) => {
@@ -674,6 +712,46 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
+  const exportAccountingExcel = () => {
+    const escapeXml = (value: string | number) => String(value)
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+    const cell = (value: string | number, type: 'String' | 'Number' = 'String') =>
+      `<Cell><Data ss:Type="${type}">${escapeXml(value)}</Data></Cell>`
+    const row = (values: Array<string | number>) =>
+      `<Row>${values.map((value) => cell(value, typeof value === 'number' ? 'Number' : 'String')).join('')}</Row>`
+    const sheet = (name: string, headers: string[], rows: Array<Array<string | number>>) =>
+      `<Worksheet ss:Name="${escapeXml(name)}"><Table>${row(headers)}${rows.map(row).join('')}</Table></Worksheet>`
+    const portfolioRows = portfolioItems.map((item) => {
+      const position = portfolio[item.ticker]
+      const currentValue = item.valuePrice * position.quantity
+      return [item.ticker, item.name, item.kind, position.quantity, position.buyPrice, item.valuePrice, currentValue, currentValue - position.buyPrice * position.quantity]
+    })
+    const operationRows = operations.map((item) => [
+      new Date(item.date).toLocaleDateString('ru-RU'), item.ticker, item.name, item.type,
+      item.quantity, item.price, item.commission ?? 0, item.realizedProfit ?? 0,
+    ])
+    const moneyRows = cashFlows.map((item) => [
+      new Date(item.date).toLocaleDateString('ru-RU'), item.type, item.ticker ?? '', item.amount, item.note ?? '',
+    ])
+    const dividendRows = portfolioDividendRecords.map((item) => [
+      new Date(`${item.date}T12:00:00`).toLocaleDateString('ru-RU'), item.ticker, item.name,
+      item.date >= todayKey ? 'Утверждён' : 'Выплачен', item.value, item.quantity, item.value * item.quantity, item.currency,
+    ])
+    const workbook = `<?xml version="1.0" encoding="UTF-8"?><?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+${sheet('Портфель', ['Тикер', 'Название', 'Тип', 'Количество', 'Средняя цена', 'Текущая цена', 'Стоимость', 'Результат'], portfolioRows)}
+${sheet('Сделки', ['Дата', 'Тикер', 'Название', 'Операция', 'Количество', 'Цена', 'Комиссия', 'Реализованная прибыль'], operationRows)}
+${sheet('Движение денег', ['Дата', 'Тип', 'Тикер', 'Сумма', 'Комментарий'], moneyRows)}
+${sheet('Дивиденды', ['Дата реестра', 'Тикер', 'Компания', 'Статус', 'На акцию', 'Количество', 'Сумма', 'Валюта'], dividendRows)}
+</Workbook>`
+    const url = URL.createObjectURL(new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `investai-accounting-${new Date().toISOString().slice(0, 10)}.xls`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   const importPortfolio = async (file?: File) => {
     if (!file) return
     try {
@@ -780,6 +858,27 @@ function App() {
     }
     void loadCurrencyRates()
   }, [])
+
+  useEffect(() => {
+    const tickers = new Set(
+      [...portfolioItems, ...(detailInstrument?.kind === 'Акция' ? [detailInstrument] : [])]
+        .filter((item) => item.kind === 'Акция')
+        .map((item) => item.ticker),
+    )
+    const missing = [...tickers].filter((ticker) => dividendHistory[ticker] === undefined)
+    if (!missing.length) return
+    let cancelled = false
+    Promise.all(missing.map(async (ticker) => {
+      try {
+        return [ticker, await loadMoexDividends(ticker)] as const
+      } catch {
+        return [ticker, []] as const
+      }
+    })).then((entries) => {
+      if (!cancelled) setDividendHistory((current) => ({ ...current, ...Object.fromEntries(entries) }))
+    })
+    return () => { cancelled = true }
+  }, [detailInstrument, dividendHistory, portfolioItems])
 
   useEffect(() => {
     const webApp = window.Telegram?.WebApp
@@ -963,6 +1062,11 @@ function App() {
     setFavoritesOnly(false)
     setActiveSection('market')
   }
+  const selectedDividendHistory = detailInstrument?.kind === 'Акция'
+    ? dividendHistory[detailInstrument.ticker] ?? []
+    : []
+  const selectedApprovedDividends = selectedDividendHistory.filter((item) => item.date >= todayKey)
+  const selectedPaidDividends = selectedDividendHistory.filter((item) => item.date < todayKey)
 
   return (
     <div className={`${isTelegram ? 'telegram-app' : ''} theme-${theme}`}>
@@ -1226,8 +1330,8 @@ function App() {
       </section>
 
       <section className="coupon-section" id="coupons">
-        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>{portfolioBonds.length || dividends ? 'Купоны и дивиденды' : 'Ближайшие купоны MOEX'}</h2></div></div>
-        {(paymentMonths.length > 0 || dividends > 0) && <div className="payment-filters" role="group" aria-label="Тип выплаты">
+        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>Купоны и дивиденды</h2></div></div>
+        {(paymentMonths.length > 0 || dividends > 0 || approvedDividends.length > 0) && <div className="payment-filters" role="group" aria-label="Тип выплаты">
           {(['Все', 'Купоны', 'Дивиденды'] as const).map((filter) => <button className={paymentFilter === filter ? 'active' : ''} type="button" onClick={() => setPaymentFilter(filter)} key={filter}>{filter}</button>)}
         </div>}
         {filteredPaymentMonths.length > 0 && <div className="payment-calendar">
@@ -1238,7 +1342,7 @@ function App() {
         </div>}
         {paymentMonths.length > 0 && filteredPaymentMonths.length === 0 && <div className="catalog-empty">Выплат этого типа пока нет.</div>}
         {portfolioBonds.length > 0 && <p className="calendar-hint schedule-note">Будущие купоны рассчитаны ориентировочно с интервалом 6 месяцев до погашения. Фактический график эмитента может отличаться.</p>}
-        {!portfolioBonds.length && <p className="calendar-hint">Добавьте облигацию в портфель — сумма выплаты рассчитается с учётом количества.</p>}
+        {!portfolioBonds.length && !approvedDividends.length && <p className="calendar-hint">Добавьте акции или облигации в портфель — утверждённые дивиденды и купоны появятся здесь с учётом количества.</p>}
         {paymentMonths.length === 0 && calendarBonds.map((bond) => {
           const amount = portfolio[bond.ticker]
             ? (bond.couponValue ?? 0) * portfolio[bond.ticker].quantity
@@ -1407,7 +1511,8 @@ function App() {
         <div className="settings-card data-card">
           <div className="settings-card-title"><div><strong>Ваши данные</strong><small>{isTelegram ? 'Синхронизация работает через Telegram CloudStorage' : 'Сохраняются только в этом браузере'}</small></div><span className={cloudReady ? 'ready' : ''}>{cloudReady ? '☁' : '●'}</span></div>
           <div className="profile-backup-actions">
-            <button type="button" onClick={exportPortfolio}>↓ Экспортировать</button>
+            <button type="button" onClick={exportAccountingExcel}>↓ Скачать Excel</button>
+            <button type="button" onClick={exportPortfolio}>↓ Резервная копия</button>
             <label>↑ Восстановить<input type="file" accept="application/json,.json" onChange={(event) => { void importPortfolio(event.target.files?.[0]) }} /></label>
           </div>
         </div>
@@ -1467,7 +1572,7 @@ function App() {
             <div className="detail-tabs">
               <button className={detailTab === 'overview' ? 'active' : ''} onClick={() => setDetailTab('overview')} type="button">Обзор</button>
               <button className={detailTab === 'events' ? 'active' : ''} onClick={() => setDetailTab('events')} type="button">События</button>
-              {(detailInstrument.kind === 'Облигация' || detailInstrument.dividendValue !== undefined) && <button className={detailTab === 'income' ? 'active' : ''} onClick={() => setDetailTab('income')} type="button">{detailInstrument.kind === 'Акция' ? 'Дивиденды' : 'Купоны'}</button>}
+              <button className={detailTab === 'income' ? 'active' : ''} onClick={() => setDetailTab('income')} type="button">{detailInstrument.kind === 'Акция' ? 'Дивиденды' : 'Купоны'}</button>
               <button className={detailTab === 'operations' ? 'active' : ''} onClick={() => setDetailTab('operations')} type="button">Операции</button>
             </div>
             {detailTab === 'overview' && <div className="detail-panel">
@@ -1484,15 +1589,18 @@ function App() {
             {detailTab === 'events' && <div className="detail-panel event-list">
               {detailInstrument.couponDate && <article><span>Купон</span><div><strong>Ближайшая купонная выплата</strong><small>{new Date(detailInstrument.couponDate).toLocaleDateString('ru-RU')}</small></div></article>}
               {detailInstrument.dividendDate && <article><span>DIV</span><div><strong>Закрытие реестра акционеров</strong><small>{new Date(detailInstrument.dividendDate).toLocaleDateString('ru-RU')}</small></div></article>}
+              {selectedApprovedDividends.slice(0, 3).map((item) => <article key={`event-${item.date}-${item.value}`}><span>DIV</span><div><strong>Утверждённый дивиденд · {item.value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong><small>Дата закрытия реестра: {new Date(`${item.date}T12:00:00`).toLocaleDateString('ru-RU')}</small></div></article>)}
               {detailInstrument.maturityDate && <article><span>₽</span><div><strong>Погашение облигации</strong><small>{new Date(detailInstrument.maturityDate).toLocaleDateString('ru-RU')}</small></div></article>}
               {marketNews.filter((item) => item.title.toLocaleLowerCase('ru').includes(detailInstrument.name.split(' ')[0].toLocaleLowerCase('ru')) || item.title.includes(detailInstrument.ticker)).slice(0, 3).map((item) => <article key={item.id}><span>NEWS</span><div><strong>{item.title}</strong><small>{new Date(item.publishedAt).toLocaleDateString('ru-RU')}</small></div></article>)}
               {!detailInstrument.couponDate && !detailInstrument.dividendDate && !detailInstrument.maturityDate && <div className="detail-empty"><span>◷</span><strong>Нет подтверждённых ближайших событий</strong><small>Добавим их, когда MOEX опубликует данные.</small></div>}
             </div>}
             {detailTab === 'income' && <div className="detail-panel income-summary">
               {detailInstrument.kind === 'Акция' ? <>
-                <div><span>Дивиденд на акцию</span><strong>{detailInstrument.dividendValue?.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
-                <div><span>Дата закрытия реестра</span><strong>{detailInstrument.dividendDate ? new Date(detailInstrument.dividendDate).toLocaleDateString('ru-RU') : 'Ожидается'}</strong></div>
-                <div><span>Доходность выплаты</span><strong>{detailInstrument.dividendValue && detailInstrument.valuePrice ? `${(detailInstrument.dividendValue / detailInstrument.valuePrice * 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
+                <div><span>Утверждённые</span><strong>{selectedApprovedDividends.length ? `${selectedApprovedDividends.length} выплат` : 'Нет новых'}</strong></div>
+                <div><span>Последний выплаченный</span><strong>{selectedPaidDividends[0] ? `${selectedPaidDividends[0].value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : 'Нет данных'}</strong></div>
+                {selectedApprovedDividends.map((item) => <article className="dividend-history-row" key={`approved-${item.date}-${item.value}`}><span>Утверждён</span><div><strong>{item.value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ на акцию</strong><small>Реестр: {new Date(`${item.date}T12:00:00`).toLocaleDateString('ru-RU')} · доходность {(item.value / detailInstrument.valuePrice * 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%</small></div></article>)}
+                {selectedPaidDividends.slice(0, 8).map((item) => <article className="dividend-history-row paid" key={`paid-${item.date}-${item.value}`}><span>Выплачен</span><div><strong>{item.value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ на акцию</strong><small>Реестр: {new Date(`${item.date}T12:00:00`).toLocaleDateString('ru-RU')}</small></div></article>)}
+                {!selectedDividendHistory.length && <div className="detail-empty"><span>DIV</span><strong>Дивидендов в базе MOEX нет</strong><small>Компания могла не объявлять или не выплачивать дивиденды.</small></div>}
               </> : <>
                 <div><span>Купон</span><strong>{detailInstrument.coupon ?? '—'}</strong></div>
                 <div><span>Ставка купона</span><strong>{detailInstrument.couponPercent !== undefined ? `${detailInstrument.couponPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : '—'}</strong></div>
@@ -1676,7 +1784,8 @@ function App() {
               ))}</div>
             </>}
             <div className="backup-actions">
-              <button type="button" onClick={exportPortfolio}>Скачать копию</button>
+              <button type="button" onClick={exportAccountingExcel}>Скачать Excel</button>
+              <button type="button" onClick={exportPortfolio}>Резервная копия</button>
               <label>Восстановить<input type="file" accept="application/json,.json" onChange={(event) => { void importPortfolio(event.target.files?.[0]) }} /></label>
             </div>
           </section>
