@@ -89,6 +89,8 @@ type MarketNews = {
 type Currency = 'RUB' | 'USD' | 'EUR'
 type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news'
 type DetailTab = 'overview' | 'events' | 'income' | 'operations'
+type AnalyticsPeriod = 'day' | 'month' | 'sixMonths' | 'year' | 'all'
+type NewsFilter = 'Все' | 'Рынок' | 'Акции' | 'Облигации'
 
 const companyDomains: Record<string, string> = {
   SBER: 'sberbank.com', GAZP: 'gazprom.ru', LKOH: 'lukoil.ru', ROSN: 'rosneft.ru',
@@ -233,6 +235,8 @@ function App() {
   const [visibleCount, setVisibleCount] = useState(20)
   const [resultPeriod, setResultPeriod] = useState<'today' | 'all'>('today')
   const [activeSection, setActiveSection] = useState<AppSection>('portfolio')
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<AnalyticsPeriod>('all')
+  const [newsFilter, setNewsFilter] = useState<NewsFilter>('Все')
   const [currency, setCurrency] = useState<Currency>(() => (localStorage.getItem('investai-currency') as Currency | null) ?? 'RUB')
   const [currencyRates, setCurrencyRates] = useState<Record<Currency, number>>({ RUB: 1, USD: 90, EUR: 98 })
   const [theme, setTheme] = useState<'dark' | 'light'>(() => localStorage.getItem('investai-theme') === 'light' ? 'light' : 'dark')
@@ -261,6 +265,8 @@ function App() {
   const [quantity, setQuantity] = useState('1')
   const [buyPrice, setBuyPrice] = useState('')
   const [showAdvice, setShowAdvice] = useState(false)
+  const [aiQuestion, setAiQuestion] = useState('')
+  const [aiAnswer, setAiAnswer] = useState('')
   const [showOperations, setShowOperations] = useState(false)
   const [showCashFlow, setShowCashFlow] = useState(false)
   const [cashFlowType, setCashFlowType] = useState<CashFlow['type']>('Пополнение')
@@ -436,12 +442,24 @@ function App() {
       text: portfolioItems.length ? `Акции ${stockShare.toFixed(0)}% · облигации ${(100 - stockShare).toFixed(0)}%` : 'Добавьте акции и облигации',
     },
   ]
-  const chartValues = portfolioHistory.map((point) => point.value)
+  const analyticsHistory = useMemo(() => {
+    if (analyticsPeriod === 'all') return portfolioHistory
+    const periodDays: Record<Exclude<AnalyticsPeriod, 'all'>, number> = {
+      day: 1,
+      month: 30,
+      sixMonths: 183,
+      year: 365,
+    }
+    const cutoff = Date.now() - periodDays[analyticsPeriod] * 86_400_000
+    const filtered = portfolioHistory.filter((point) => new Date(`${point.date}T12:00:00`).getTime() >= cutoff)
+    return filtered.length > 1 ? filtered : portfolioHistory.slice(-2)
+  }, [analyticsPeriod, portfolioHistory])
+  const chartValues = analyticsHistory.map((point) => point.value)
   const chartMin = chartValues.length ? Math.min(...chartValues) : 0
   const chartMax = chartValues.length ? Math.max(...chartValues) : 0
   const chartRange = Math.max(1, chartMax - chartMin)
-  const chartPoints = portfolioHistory.map((point, index) => {
-    const x = portfolioHistory.length > 1 ? index / (portfolioHistory.length - 1) * 100 : 50
+  const chartPoints = analyticsHistory.map((point, index) => {
+    const x = analyticsHistory.length > 1 ? index / (analyticsHistory.length - 1) * 100 : 50
     const y = 38 - (point.value - chartMin) / chartRange * 32
     return `${x},${y}`
   }).join(' ')
@@ -455,6 +473,40 @@ function App() {
         : stockShare < 20
           ? `Облигации занимают ${(100 - stockShare).toFixed(0)}% портфеля. Доля акций небольшая — потенциал роста может быть ограничен.`
           : `Структура выглядит умеренно сбалансированной: акции ${stockShare.toFixed(0)}%, облигации ${(100 - stockShare).toFixed(0)}%.`
+
+  const answerPortfolioQuestion = (question: string) => {
+    const normalized = question.toLocaleLowerCase('ru')
+    if (!portfolioItems.length) return 'Сначала добавьте хотя бы одну бумагу в портфель. Тогда я смогу учитывать стоимость, доли активов, выплаты и изменение цены.'
+    if (/выплат|купон|дивиденд/.test(normalized)) {
+      const futurePayments = paymentEvents.filter((payment) => new Date(payment.date).getTime() >= Date.now())
+      const total = futurePayments.reduce((sum, payment) => sum + payment.amount, 0)
+      const nearest = futurePayments[0]
+      return nearest
+        ? `В календаре ${futurePayments.length} будущих выплат на общую сумму ${total.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽. Ближайшая — ${nearest.title}, ${new Date(nearest.date).toLocaleDateString('ru-RU')}, ожидаемая сумма ${nearest.amount.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽.`
+        : 'В портфеле пока нет будущих купонных или дивидендных выплат с известной датой.'
+    }
+    if (/риск|опас|паден/.test(normalized)) {
+      const leader = allocationItems[0]
+      return `Расчётный уровень риска — ${riskLevel.toLocaleLowerCase('ru')}. Крупнейшая позиция ${leader?.instrument.ticker ?? '—'} занимает ${largestPositionShare.toFixed(1)}%. ${largestPositionShare > 50 ? 'Портфель сильно зависит от одной бумаги — снижение её доли улучшит устойчивость.' : 'Критической концентрации в одной позиции не обнаружено.'}`
+    }
+    if (/доход|прибыл|результат/.test(normalized)) {
+      return `Результат за сегодня: ${todayProfit >= 0 ? '+' : ''}${todayProfit.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ (${todayProfitPercent.toFixed(2)}%). За всё время: ${profit >= 0 ? '+' : ''}${profit.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ (${profitPercent.toFixed(2)}%). Пополнения и выводы учитываются, если вы внесли их в разделе операций.`
+    }
+    if (/структур|дол|состав|диверсиф/.test(normalized)) {
+      return `В портфеле ${portfolioItems.length} активов: акции занимают ${stockShare.toFixed(1)}%, облигации ${(100 - stockShare).toFixed(1)}%. Оценка диверсификации — ${diversificationScore}/100. ${advice}`
+    }
+    if (/что купить|рекоменд|добавить/.test(normalized)) {
+      return `Я не выбираю конкретную бумагу вместо вас. По структуре портфеля полезно проверить три вещи: долю крупнейшей позиции (${largestPositionShare.toFixed(1)}%), баланс акций и облигаций (${stockShare.toFixed(1)}% / ${(100 - stockShare).toFixed(1)}%) и соответствие сроку вашей цели.`
+    }
+    return `${advice} Сейчас в портфеле ${portfolioItems.length} активов общей стоимостью ${portfolioValue.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽. Уточните вопрос про риск, доходность, структуру или ближайшие выплаты — я сделаю более точный расчёт.`
+  }
+
+  const submitAiQuestion = (question = aiQuestion) => {
+    const value = question.trim()
+    if (!value) return
+    setAiQuestion(value)
+    setAiAnswer(answerPortfolioQuestion(value))
+  }
 
   const openAddInstrument = (instrument: Instrument) => {
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light')
@@ -624,7 +676,7 @@ function App() {
       const next = current.some((point) => point.date === today)
         ? current.map((point) => point.date === today ? { ...point, value: portfolioValue } : point)
         : [...current, { date: today, value: portfolioValue }]
-      return next.slice(-30)
+      return next.slice(-365)
     })
   }, [portfolioItems.length, portfolioValue])
 
@@ -708,7 +760,7 @@ function App() {
         favorites,
         cashflows: cashFlows.slice(0, 100),
         operations: operations.slice(0, 25),
-        history: portfolioHistory.slice(-30),
+        history: portfolioHistory.slice(-365),
         settings: { goal: investmentGoal, goalMonths, currency, theme, completedLessons },
       }
       Object.entries(values).forEach(([key, value]) => storage.setItem(key, JSON.stringify(value)))
@@ -784,6 +836,11 @@ function App() {
     if (/дивиденд|акци|эмитент|компан|отчет/.test(value)) return { label: 'Акции', level: 'share', text: 'Может повысить волатильность отдельных акций или отрасли.' }
     return { label: 'Рынок', level: 'normal', text: 'Важное событие инфраструктуры или торгов Московской биржи.' }
   }
+  const filteredMarketNews = marketNews.filter((item) => {
+    if (newsFilter === 'Все') return true
+    const impactLabel = newsImpact(item.title).label
+    return impactLabel === newsFilter || (newsFilter === 'Рынок' && impactLabel === 'Весь рынок')
+  })
   const formatMoney = (rubles: number, maximumFractionDigits = currency === 'RUB' ? 0 : 2) =>
     new Intl.NumberFormat('ru-RU', {
       style: 'currency',
@@ -1090,8 +1147,16 @@ function App() {
         <div className="analytics-title"><button type="button" onClick={() => setActiveSection('portfolio')} aria-label="Назад">‹</button><div><p className="eyebrow">ВАШ ПОРТФЕЛЬ</p><h2>Аналитика</h2></div></div>
         <article className="analytics-card">
           <div className="analytics-value"><div><strong>{formatMoney(portfolioValue, 2)}</strong><span>Стоимость портфеля</span></div><span>{currency === 'RUB' ? '₽' : currency === 'USD' ? '$' : '€'}</span></div>
-          {portfolioHistory.length > 1 ? <svg className="analytics-chart" viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Динамика стоимости портфеля"><polygon points={`0,48 ${chartPoints} 100,48`} fill="rgba(76,132,255,.2)" /><polyline points={chartPoints} fill="none" stroke="#66a0ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : <div className="analytics-empty-chart"><span>◒</span><p>График появится после второго дневного значения портфеля</p></div>}
-          <div className="analytics-periods"><button>День</button><button>Месяц</button><button>6 мес</button><button className="active">Всё время</button></div>
+          {analyticsHistory.length > 1 ? <svg className="analytics-chart" viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Динамика стоимости портфеля"><polygon points={`0,48 ${chartPoints} 100,48`} fill="rgba(76,132,255,.2)" /><polyline points={chartPoints} fill="none" stroke="#66a0ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : <div className="analytics-empty-chart"><span>◒</span><p>График появится после второго дневного значения портфеля</p></div>}
+          <div className="analytics-periods" role="group" aria-label="Период графика">
+            {([
+              ['day', 'День'],
+              ['month', 'Месяц'],
+              ['sixMonths', '6 мес'],
+              ['year', 'Год'],
+              ['all', 'Всё время'],
+            ] as const).map(([period, label]) => <button className={analyticsPeriod === period ? 'active' : ''} type="button" onClick={() => setAnalyticsPeriod(period)} key={period}>{label}</button>)}
+          </div>
           <div className="income-list">
             <div><span>Общий доход</span><strong className={profit >= 0 ? 'up' : 'down'}>{profit >= 0 ? '+' : ''}{formatMoney(profit, 2)} · {profitPercent.toFixed(2)}%</strong></div>
             <div><span>Доход от изменения цены</span><strong className={marketProfit >= 0 ? 'up' : 'down'}>{marketProfit >= 0 ? '+' : ''}{formatMoney(marketProfit, 2)}</strong></div>
@@ -1118,7 +1183,10 @@ function App() {
       <section className="news-section" id="news">
         <div className="section-heading"><div><p className="eyebrow">МОСКОВСКАЯ БИРЖА</p><h2>Новости рынка</h2></div><span className={`news-live ${newsStatus}`}>{newsStatus === 'loading' ? 'Загрузка' : newsStatus === 'live' ? 'Обновляется' : 'Нет связи'}</span></div>
         <p className="news-intro">События, которые могут влиять на стоимость акций, облигаций, валюту и общую волатильность рынка.</p>
-        {marketNews.length ? <div className="news-list">{marketNews.map((item) => {
+        {marketNews.length > 0 && <div className="news-filters" role="group" aria-label="Фильтр новостей">
+          {(['Все', 'Рынок', 'Акции', 'Облигации'] as NewsFilter[]).map((filter) => <button className={newsFilter === filter ? 'active' : ''} type="button" onClick={() => setNewsFilter(filter)} key={filter}>{filter}</button>)}
+        </div>}
+        {filteredMarketNews.length ? <div className="news-list">{filteredMarketNews.map((item) => {
           const impact = newsImpact(item.title)
           return <a href={`https://www.moex.com/n${item.id}`} target="_blank" rel="noreferrer" key={item.id}>
             <div className="news-meta"><span className={`impact-${impact.level}`}>{impact.label}</span><time>{new Date(item.publishedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</time></div>
@@ -1126,7 +1194,7 @@ function App() {
             <p>{impact.text}</p>
             <small>Источник: Московская биржа ↗</small>
           </a>
-        })}</div> : <div className="catalog-empty">{newsStatus === 'loading' ? 'Загружаем официальные новости MOEX…' : 'Новости временно недоступны. Попробуйте позднее.'}</div>}
+        })}</div> : <div className="catalog-empty">{newsStatus === 'loading' ? 'Загружаем официальные новости MOEX…' : marketNews.length ? 'В этой категории пока нет новостей.' : 'Новости временно недоступны. Попробуйте позднее.'}</div>}
         <p className="news-disclaimer">Метка влияния определяется по теме новости и не является прогнозом движения цены или инвестиционной рекомендацией.</p>
       </section>
 
@@ -1299,6 +1367,16 @@ function App() {
               <div><span>Диверсификация</span><strong>{diversificationScore}/100</strong></div>
               <div><span>Крупнейшая позиция</span><strong>{largestPositionShare.toFixed(0)}%</strong></div>
             </div>
+            <div className="ai-quick-questions">
+              {['Какие выплаты ближайшие?', 'Какой риск портфеля?', 'Покажи доходность', 'Как улучшить структуру?'].map((question) => (
+                <button type="button" onClick={() => submitAiQuestion(question)} key={question}>{question}</button>
+              ))}
+            </div>
+            {aiAnswer && <div className="ai-conversation"><span>✦</span><p>{aiAnswer}</p></div>}
+            <form className="ai-question-form" onSubmit={(event) => { event.preventDefault(); submitAiQuestion() }}>
+              <input value={aiQuestion} onChange={(event) => setAiQuestion(event.target.value)} placeholder="Спросите о своём портфеле…" aria-label="Вопрос AI-помощнику" />
+              <button type="submit" aria-label="Отправить вопрос">↑</button>
+            </form>
             <p className="advice-disclaimer">Демонстрационный анализ, не инвестиционная рекомендация.</p>
             <button className="modal-submit" type="button" onClick={() => setShowAdvice(false)}>Понятно</button>
           </section>
@@ -1328,7 +1406,7 @@ function App() {
             <button className="modal-close" type="button" onClick={() => setShowOperations(false)} aria-label="Закрыть">×</button>
             <p className="eyebrow">ИСТОРИЯ</p>
             <h2>Операции</h2>
-            <p className="modal-caption">Последние изменения портфеля сохраняются на этом устройстве.</p>
+            <p className="modal-caption">{isTelegram ? 'Изменения синхронизируются между вашими устройствами через Telegram.' : 'Изменения сохраняются в браузере. Можно скачать резервную копию.'}</p>
             {operations.length ? <div className="operations-list">{operations.map((operation) => (
               <article key={operation.id}>
                 <span className={`operation-icon operation-${operation.type.toLocaleLowerCase('ru')}`}>{operation.type === 'Покупка' ? '+' : operation.type === 'Удаление' ? '−' : '↻'}</span>
