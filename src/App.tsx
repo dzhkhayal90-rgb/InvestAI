@@ -87,7 +87,7 @@ type MarketNews = {
 }
 
 type Currency = 'RUB' | 'USD' | 'EUR'
-type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news'
+type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news' | 'profile'
 type DetailTab = 'overview' | 'events' | 'income' | 'operations'
 type AnalyticsPeriod = 'day' | 'month' | 'sixMonths' | 'year' | 'all'
 type NewsFilter = 'Все' | 'Рынок' | 'Акции' | 'Облигации'
@@ -240,6 +240,7 @@ function App() {
   const [currency, setCurrency] = useState<Currency>(() => (localStorage.getItem('investai-currency') as Currency | null) ?? 'RUB')
   const [currencyRates, setCurrencyRates] = useState<Record<Currency, number>>({ RUB: 1, USD: 90, EUR: 98 })
   const [theme, setTheme] = useState<'dark' | 'light'>(() => localStorage.getItem('investai-theme') === 'light' ? 'light' : 'dark')
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('investai-notifications') !== 'off')
   const [cloudReady, setCloudReady] = useState(false)
   const [syncStatus, setSyncStatus] = useState<'local' | 'syncing' | 'synced'>('local')
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
@@ -697,6 +698,10 @@ function App() {
   }, [theme])
 
   useEffect(() => {
+    localStorage.setItem('investai-notifications', notificationsEnabled ? 'on' : 'off')
+  }, [notificationsEnabled])
+
+  useEffect(() => {
     const loadCurrencyRates = async () => {
       try {
         const response = await fetch('https://www.cbr-xml-daily.ru/daily_json.js')
@@ -876,7 +881,11 @@ function App() {
         <nav className="site-nav" aria-label="Навигация">
           {sections.map((section) => <a href={section.href} key={section.href}>{section.label}</a>)}
         </nav>
-        {isTelegram && <div className="telegram-header-actions"><span className={`sync-dot ${syncStatus}`}>{syncStatus === 'synced' ? '☁' : '•'}</span><button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label="Переключить тему">{theme === 'dark' ? '☀' : '☾'}</button></div>}
+        {isTelegram && <div className="telegram-header-actions">
+          <span className={`sync-dot ${syncStatus}`}>{syncStatus === 'synced' ? '☁' : '•'}</span>
+          <button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label="Переключить тему">{theme === 'dark' ? '☀' : '☾'}</button>
+          <button className="profile-avatar-button" type="button" onClick={() => setActiveSection('profile')} aria-label="Открыть профиль">{name.slice(0, 1).toLocaleUpperCase('ru')}</button>
+        </div>}
         <a className="header-button" href="#market">Начать</a>
       </header>
 
@@ -1255,6 +1264,55 @@ function App() {
         <div className="tips-list">
           {usefulTips.map((tip) => <article key={tip}><span>✓</span><p>{tip}</p></article>)}
         </div>
+      </section>
+
+      <section className="profile-section" aria-label="Профиль и настройки">
+        <div className="profile-heading">
+          <div className="profile-avatar">{name.slice(0, 1).toLocaleUpperCase('ru')}</div>
+          <div><p className="eyebrow">ПРОФИЛЬ</p><h2>{name}</h2><span>{isTelegram ? 'Данные привязаны к Telegram' : 'Локальный профиль'}</span></div>
+          <span className={`profile-sync ${syncStatus}`}>{syncStatus === 'synced' ? 'Синхронизировано' : syncStatus === 'syncing' ? 'Синхронизация…' : 'На устройстве'}</span>
+        </div>
+
+        <div className="profile-summary">
+          <article><span>Стоимость</span><strong>{formatMoney(portfolioValue)}</strong></article>
+          <article><span>Активов</span><strong>{portfolioItems.length}</strong></article>
+          <article><span>Уроков</span><strong>{completedLessons.length}/{lessons.length}</strong></article>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-row">
+            <span className="settings-icon">☀</span>
+            <div><strong>Тема</strong><small>Оформление приложения</small></div>
+            <div className="settings-segment">
+              <button className={theme === 'dark' ? 'active' : ''} type="button" onClick={() => setTheme('dark')}>Тёмная</button>
+              <button className={theme === 'light' ? 'active' : ''} type="button" onClick={() => setTheme('light')}>Светлая</button>
+            </div>
+          </div>
+          <div className="settings-row">
+            <span className="settings-icon">₽</span>
+            <div><strong>Основная валюта</strong><small>Для стоимости и аналитики</small></div>
+            <div className="settings-segment compact">
+              {(['RUB', 'USD', 'EUR'] as Currency[]).map((item) => <button className={currency === item ? 'active' : ''} type="button" onClick={() => setCurrency(item)} key={item}>{item === 'RUB' ? '₽' : item === 'USD' ? '$' : '€'}</button>)}
+            </div>
+          </div>
+          <div className="settings-row">
+            <span className="settings-icon">♢</span>
+            <div><strong>Уведомления</strong><small>Выплаты и важные события</small></div>
+            <button className={`settings-toggle ${notificationsEnabled ? 'active' : ''}`} type="button" role="switch" aria-checked={notificationsEnabled} onClick={() => setNotificationsEnabled((current) => !current)}><span /></button>
+          </div>
+          <button className="settings-link" type="button" onClick={() => setShowOperations(true)}><span className="settings-icon">⇄</span><div><strong>Операции</strong><small>Покупки, пополнения и дивиденды</small></div><b>›</b></button>
+          <button className="settings-link" type="button" onClick={() => setActiveSection('analytics')}><span className="settings-icon">◔</span><div><strong>Аналитика</strong><small>Доходность и структура портфеля</small></div><b>›</b></button>
+        </div>
+
+        <div className="settings-card data-card">
+          <div className="settings-card-title"><div><strong>Ваши данные</strong><small>{isTelegram ? 'Синхронизация работает через Telegram CloudStorage' : 'Сохраняются только в этом браузере'}</small></div><span className={cloudReady ? 'ready' : ''}>{cloudReady ? '☁' : '●'}</span></div>
+          <div className="profile-backup-actions">
+            <button type="button" onClick={exportPortfolio}>↓ Экспортировать</button>
+            <label>↑ Восстановить<input type="file" accept="application/json,.json" onChange={(event) => { void importPortfolio(event.target.files?.[0]) }} /></label>
+          </div>
+        </div>
+
+        <p className="profile-disclaimer">InvestAI не является брокером и не совершает сделки. Данные и расчёты носят информационный характер.</p>
       </section>
 
       </main>
