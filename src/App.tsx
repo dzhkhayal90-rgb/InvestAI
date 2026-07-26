@@ -60,10 +60,12 @@ type Operation = {
   id: string
   ticker: string
   name: string
-  type: 'Покупка' | 'Изменение' | 'Удаление'
+  type: 'Покупка' | 'Продажа' | 'Изменение' | 'Удаление'
   quantity: number
   price: number
   date: string
+  commission?: number
+  realizedProfit?: number
 }
 
 type PortfolioSnapshot = {
@@ -274,6 +276,9 @@ function App() {
   const [detailTab, setDetailTab] = useState<DetailTab>('overview')
   const [quantity, setQuantity] = useState('1')
   const [buyPrice, setBuyPrice] = useState('')
+  const [tradeType, setTradeType] = useState<'Покупка' | 'Продажа'>('Покупка')
+  const [tradeCommission, setTradeCommission] = useState('0')
+  const [tradeDate, setTradeDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [showAdvice, setShowAdvice] = useState(false)
   const [aiQuestion, setAiQuestion] = useState('')
   const [aiAnswer, setAiAnswer] = useState('')
@@ -333,13 +338,15 @@ function App() {
     () => portfolioItems.reduce((sum, instrument) => sum + portfolio[instrument.ticker].buyPrice * portfolio[instrument.ticker].quantity, 0),
     [portfolio, portfolioItems],
   )
-  const deposits = cashFlows.filter((flow) => flow.type === 'Пополнение').reduce((sum, flow) => sum + flow.amount, 0)
-  const withdrawals = cashFlows.filter((flow) => flow.type === 'Вывод').reduce((sum, flow) => sum + flow.amount, 0)
   const dividends = cashFlows.filter((flow) => flow.type === 'Дивиденд').reduce((sum, flow) => sum + flow.amount, 0)
-  const trackedCapital = deposits - withdrawals
   const marketProfit = portfolioValue - investedValue
-  const profit = trackedCapital > 0 ? portfolioValue + withdrawals + dividends - deposits : marketProfit + dividends
-  const profitBase = trackedCapital > 0 ? deposits : investedValue
+  const realizedProfit = operations
+    .filter((operation) => operation.type === 'Продажа')
+    .reduce((sum, operation) => sum + (operation.realizedProfit ?? 0), 0)
+  const profit = marketProfit + realizedProfit + dividends
+  const profitBase = investedValue + operations
+    .filter((operation) => operation.type === 'Продажа')
+    .reduce((sum, operation) => sum + operation.quantity * operation.price, 0)
   const profitPercent = profitBase ? profit / profitBase * 100 : 0
   const todayProfit = portfolioItems.reduce((sum, instrument) => {
     const currentValue = instrument.valuePrice * portfolio[instrument.ticker].quantity
@@ -537,41 +544,66 @@ function App() {
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('light')
     setEditingPosition(false)
     setSelectedInstrument(instrument)
+    setTradeType('Покупка')
     setQuantity('1')
     setBuyPrice(String(instrument.valuePrice))
+    setTradeCommission('0')
+    setTradeDate(new Date().toISOString().slice(0, 10))
   }
 
-  const openEditPosition = (instrument: Instrument) => {
+  const openTradeInstrument = (instrument: Instrument, type: 'Покупка' | 'Продажа') => {
     const position = portfolio[instrument.ticker]
-    if (!position) return
-    setEditingPosition(true)
+    if (type === 'Продажа' && !position) return
+    setEditingPosition(false)
     setSelectedInstrument(instrument)
-    setQuantity(String(position.quantity))
-    setBuyPrice(String(position.buyPrice))
+    setTradeType(type)
+    setQuantity(type === 'Продажа' ? String(Math.min(1, position?.quantity ?? 1)) : '1')
+    setBuyPrice(String(instrument.valuePrice))
+    setTradeCommission('0')
+    setTradeDate(new Date().toISOString().slice(0, 10))
   }
 
   const addInstrument = () => {
     if (!selectedInstrument) return
     const amount = Math.max(1, Number(quantity) || 1)
     const price = Math.max(0, Number(buyPrice) || selectedInstrument.valuePrice)
+    const commission = Math.max(0, Number(tradeCommission) || 0)
+    const existingPosition = portfolio[selectedInstrument.ticker]
+    const executedAmount = tradeType === 'Продажа'
+      ? Math.min(amount, existingPosition?.quantity ?? 0)
+      : amount
+    if (tradeType === 'Продажа' && !executedAmount) return
     setPortfolio((current) => {
       if (editingPosition) return { ...current, [selectedInstrument.ticker]: { quantity: amount, buyPrice: price } }
       const existing = current[selectedInstrument.ticker]
+      if (tradeType === 'Продажа' && existing) {
+        const remaining = existing.quantity - executedAmount
+        if (remaining <= 0) {
+          const next = { ...current }
+          delete next[selectedInstrument.ticker]
+          return next
+        }
+        return { ...current, [selectedInstrument.ticker]: { ...existing, quantity: remaining } }
+      }
       const totalQuantity = (existing?.quantity ?? 0) + amount
       const averagePrice = existing
-        ? ((existing.buyPrice * existing.quantity) + (price * amount)) / totalQuantity
-        : price
+        ? ((existing.buyPrice * existing.quantity) + (price * amount) + commission) / totalQuantity
+        : price + commission / amount
       return { ...current, [selectedInstrument.ticker]: { quantity: totalQuantity, buyPrice: averagePrice } }
     })
-    setNotice(editingPosition ? `${selectedInstrument.ticker} обновлён` : `${selectedInstrument.ticker} добавлен в портфель`)
+    setNotice(editingPosition ? `${selectedInstrument.ticker} обновлён` : `${tradeType} ${selectedInstrument.ticker} сохранена`)
     const operation: Operation = {
       id: `${Date.now()}-${selectedInstrument.ticker}`,
       ticker: selectedInstrument.ticker,
       name: selectedInstrument.name,
-      type: editingPosition ? 'Изменение' : 'Покупка',
-      quantity: amount,
+      type: editingPosition ? 'Изменение' : tradeType,
+      quantity: executedAmount,
       price,
-      date: new Date().toISOString(),
+      commission,
+      realizedProfit: tradeType === 'Продажа' && existingPosition
+        ? (price - existingPosition.buyPrice) * executedAmount - commission
+        : undefined,
+      date: new Date(`${tradeDate}T12:00:00`).toISOString(),
     }
     setOperations((current) => [operation, ...current].slice(0, 100))
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred('medium')
@@ -1232,6 +1264,7 @@ function App() {
           <div className="income-list">
             <div className="analytics-period-result"><span>Результат {analyticsPeriodLabel[analyticsPeriod]}</span>{analyticsPeriodResult ? <strong className={analyticsPeriodResult.value >= 0 ? 'up' : 'down'}>{analyticsPeriodResult.value >= 0 ? '+' : ''}{formatMoney(analyticsPeriodResult.value, 2)} · {analyticsPeriodResult.percent.toFixed(2)}%</strong> : <strong>Недостаточно истории</strong>}</div>
             <div><span>Доход от изменения цены</span><strong className={marketProfit >= 0 ? 'up' : 'down'}>{marketProfit >= 0 ? '+' : ''}{formatMoney(marketProfit, 2)}</strong></div>
+            <div><span>Зафиксировано продажами</span><strong className={realizedProfit >= 0 ? 'up' : 'down'}>{realizedProfit >= 0 ? '+' : ''}{formatMoney(realizedProfit, 2)}</strong></div>
             <div><span>Дивиденды</span><strong className="up">+{formatMoney(dividends, 2)}</strong></div>
           </div>
         </article>
@@ -1397,13 +1430,22 @@ function App() {
         <div className="modal-backdrop" onClick={() => setSelectedInstrument(null)}>
           <form className="asset-modal" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); addInstrument() }}>
             <button className="modal-close" type="button" onClick={() => setSelectedInstrument(null)} aria-label="Закрыть">×</button>
-            <p className="eyebrow">{editingPosition ? 'ИЗМЕНИТЬ ПОЗИЦИЮ' : 'ДОБАВИТЬ В ПОРТФЕЛЬ'}</p>
+            <p className="eyebrow">СДЕЛКА</p>
             <h2>{selectedInstrument.name}</h2>
             <p className="modal-caption">{selectedInstrument.ticker} · текущая цена {formatPrice(selectedInstrument)}</p>
-            <label>Количество<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-            <label>Цена покупки за бумагу, ₽<input type="number" min="0" step="0.01" value={buyPrice} onChange={(event) => setBuyPrice(event.target.value)} /></label>
-            <div className="modal-total"><span>Сумма</span><strong>{((Number(quantity) || 0) * (Number(buyPrice) || 0)).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
-            <button className="modal-submit" type="submit">{editingPosition ? 'Сохранить изменения' : 'Добавить актив'}</button>
+            <div className="trade-type-switch">
+              <button className={tradeType === 'Покупка' ? 'active buy' : ''} type="button" onClick={() => setTradeType('Покупка')}>Покупка</button>
+              <button className={tradeType === 'Продажа' ? 'active sell' : ''} type="button" disabled={!portfolio[selectedInstrument.ticker]} onClick={() => setTradeType('Продажа')}>Продажа</button>
+            </div>
+            <label>Количество<input type="number" min="1" max={tradeType === 'Продажа' ? portfolio[selectedInstrument.ticker]?.quantity : undefined} step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+            {tradeType === 'Продажа' && <p className="trade-balance">Доступно: {portfolio[selectedInstrument.ticker]?.quantity ?? 0} шт.</p>}
+            <label>Цена за бумагу, ₽<input type="number" min="0" step="0.01" value={buyPrice} onChange={(event) => setBuyPrice(event.target.value)} /></label>
+            <div className="trade-grid">
+              <label>Комиссия, ₽<input type="number" min="0" step="0.01" value={tradeCommission} onChange={(event) => setTradeCommission(event.target.value)} /></label>
+              <label>Дата сделки<input type="date" value={tradeDate} onChange={(event) => setTradeDate(event.target.value)} /></label>
+            </div>
+            <div className="modal-total"><span>{tradeType === 'Покупка' ? 'К оплате' : 'К получению'}</span><strong>{Math.max(0, (Number(quantity) || 0) * (Number(buyPrice) || 0) + (tradeType === 'Покупка' ? 1 : -1) * (Number(tradeCommission) || 0)).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</strong></div>
+            <button className={`modal-submit trade-submit ${tradeType === 'Продажа' ? 'sell' : ''}`} type="submit">{tradeType === 'Покупка' ? 'Сохранить покупку' : 'Сохранить продажу'}</button>
           </form>
         </div>
       )}
@@ -1460,7 +1502,7 @@ function App() {
               </>}
             </div>}
             {detailTab === 'operations' && <div className="detail-panel instrument-operations">
-              {operations.filter((item) => item.ticker === detailInstrument.ticker).length ? operations.filter((item) => item.ticker === detailInstrument.ticker).map((item) => <article key={item.id}><span>{item.type === 'Покупка' ? '+' : item.type === 'Удаление' ? '−' : '↻'}</span><div><strong>{item.type}</strong><small>{new Date(item.date).toLocaleString('ru-RU')}</small></div><div><strong>{item.quantity} шт.</strong><small>{item.price.toLocaleString('ru-RU')} ₽</small></div></article>) : <div className="detail-empty"><span>⇄</span><strong>Операций пока нет</strong><small>История появится после добавления бумаги в портфель.</small></div>}
+              {operations.filter((item) => item.ticker === detailInstrument.ticker).length ? operations.filter((item) => item.ticker === detailInstrument.ticker).map((item) => <article key={item.id}><span>{item.type === 'Покупка' ? '+' : item.type === 'Продажа' || item.type === 'Удаление' ? '−' : '↻'}</span><div><strong>{item.type}</strong><small>{new Date(item.date).toLocaleString('ru-RU')}{item.commission ? ` · комиссия ${item.commission.toLocaleString('ru-RU')} ₽` : ''}</small></div><div><strong>{item.quantity} шт.</strong><small>{item.price.toLocaleString('ru-RU')} ₽</small></div></article>) : <div className="detail-empty"><span>⇄</span><strong>Операций пока нет</strong><small>История появится после добавления бумаги в портфель.</small></div>}
             </div>}
             {detailInstrument.kind === 'Облигация' && <button className="calculator-button" type="button" onClick={() => {
               setBondCalculator(detailInstrument)
@@ -1473,12 +1515,18 @@ function App() {
               setAlertPrice(String(priceAlerts.find((item) => item.ticker === detailInstrument.ticker)?.target ?? Math.round(detailInstrument.valuePrice * 1.05 * 100) / 100))
               setDetailInstrument(null)
             }}>{priceAlerts.some((item) => item.ticker === detailInstrument.ticker) ? '♢ Изменить ценовую цель' : '♢ Уведомить о цене'}</button>
-            <button className="modal-submit" type="button" onClick={() => {
+            <div className="detail-trade-actions">
+              <button className="modal-submit" type="button" onClick={() => {
               const instrument = detailInstrument
               setDetailInstrument(null)
-              if (portfolio[instrument.ticker]) openEditPosition(instrument)
-              else openAddInstrument(instrument)
-            }}>{portfolio[detailInstrument.ticker] ? 'Изменить позицию' : '＋ Добавить в портфель'}</button>
+              openTradeInstrument(instrument, 'Покупка')
+              }}>＋ Купить</button>
+              {portfolio[detailInstrument.ticker] && <button className="modal-submit sell-button" type="button" onClick={() => {
+                const instrument = detailInstrument
+                setDetailInstrument(null)
+                openTradeInstrument(instrument, 'Продажа')
+              }}>− Продать</button>}
+            </div>
           </section>
         </div>
       )}
@@ -1612,8 +1660,8 @@ function App() {
             <p className="modal-caption">{isTelegram ? 'Изменения синхронизируются между вашими устройствами через Telegram.' : 'Изменения сохраняются в браузере. Можно скачать резервную копию.'}</p>
             {operations.length ? <div className="operations-list">{operations.map((operation) => (
               <article key={operation.id}>
-                <span className={`operation-icon operation-${operation.type.toLocaleLowerCase('ru')}`}>{operation.type === 'Покупка' ? '+' : operation.type === 'Удаление' ? '−' : '↻'}</span>
-                <div><strong>{operation.ticker}</strong><small>{operation.type} · {new Date(operation.date).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</small></div>
+                <span className={`operation-icon operation-${operation.type.toLocaleLowerCase('ru')}`}>{operation.type === 'Покупка' ? '+' : operation.type === 'Продажа' || operation.type === 'Удаление' ? '−' : '↻'}</span>
+                <div><strong>{operation.ticker}</strong><small>{operation.type} · {new Date(operation.date).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })}{operation.commission ? ` · комиссия ${operation.commission.toLocaleString('ru-RU')} ₽` : ''}</small></div>
                 <div><strong>{operation.quantity} шт.</strong><small>{operation.price.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</small></div>
               </article>
             ))}</div> : <div className="catalog-empty">Операций пока нет. Добавьте первый актив.</div>}
