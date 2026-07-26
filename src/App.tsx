@@ -91,6 +91,7 @@ type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'new
 type DetailTab = 'overview' | 'events' | 'income' | 'operations'
 type AnalyticsPeriod = 'day' | 'month' | 'sixMonths' | 'year' | 'all'
 type NewsFilter = 'Все' | 'Рынок' | 'Акции' | 'Облигации'
+type PriceAlert = { ticker: string; target: number; direction: 'above' | 'below'; createdAt: string }
 
 const companyDomains: Record<string, string> = {
   SBER: 'sberbank.com', GAZP: 'gazprom.ru', LKOH: 'lukoil.ru', ROSN: 'rosneft.ru',
@@ -243,6 +244,12 @@ function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('investai-notifications') !== 'off')
   const [showNotifications, setShowNotifications] = useState(false)
   const [notificationsReadAt, setNotificationsReadAt] = useState(() => localStorage.getItem('investai-notifications-read') ?? '')
+  const [alertInstrument, setAlertInstrument] = useState<Instrument | null>(null)
+  const [alertPrice, setAlertPrice] = useState('')
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>(() => {
+    const saved = localStorage.getItem('investai-price-alerts')
+    return saved ? JSON.parse(saved) as PriceAlert[] : []
+  })
   const [cloudReady, setCloudReady] = useState(false)
   const [syncStatus, setSyncStatus] = useState<'local' | 'syncing' | 'synced'>('local')
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
@@ -708,6 +715,10 @@ function App() {
   }, [notificationsReadAt])
 
   useEffect(() => {
+    localStorage.setItem('investai-price-alerts', JSON.stringify(priceAlerts))
+  }, [priceAlerts])
+
+  useEffect(() => {
     const loadCurrencyRates = async () => {
       try {
         const response = await fetch('https://www.cbr-xml-daily.ru/daily_json.js')
@@ -747,13 +758,14 @@ function App() {
           if (values.operations) setOperations(JSON.parse(values.operations) as Operation[])
           if (values.history) setPortfolioHistory(JSON.parse(values.history) as PortfolioSnapshot[])
           if (values.settings) {
-            const settings = JSON.parse(values.settings) as { goal?: number; goalMonths?: number; currency?: Currency; theme?: 'dark' | 'light'; completedLessons?: string[]; notificationsEnabled?: boolean }
+            const settings = JSON.parse(values.settings) as { goal?: number; goalMonths?: number; currency?: Currency; theme?: 'dark' | 'light'; completedLessons?: string[]; notificationsEnabled?: boolean; priceAlerts?: PriceAlert[] }
             if (typeof settings.goal === 'number') setInvestmentGoal(settings.goal)
             if (typeof settings.goalMonths === 'number') setGoalMonths(settings.goalMonths)
             if (settings.currency) setCurrency(settings.currency)
             if (settings.theme) setTheme(settings.theme)
             if (settings.completedLessons) setCompletedLessons(settings.completedLessons)
             if (typeof settings.notificationsEnabled === 'boolean') setNotificationsEnabled(settings.notificationsEnabled)
+            if (settings.priceAlerts) setPriceAlerts(settings.priceAlerts)
           }
           setSyncStatus('synced')
           } catch {
@@ -779,7 +791,7 @@ function App() {
         cashflows: cashFlows.slice(0, 100),
         operations: operations.slice(0, 25),
         history: portfolioHistory.slice(-365),
-        settings: { goal: investmentGoal, goalMonths, currency, theme, completedLessons, notificationsEnabled },
+        settings: { goal: investmentGoal, goalMonths, currency, theme, completedLessons, notificationsEnabled, priceAlerts },
       }
       try {
         Object.entries(values).forEach(([key, value]) => storage.setItem(key, JSON.stringify(value)))
@@ -789,7 +801,7 @@ function App() {
       }
     }, 700)
     return () => window.clearTimeout(timer)
-  }, [cashFlows, cloudReady, completedLessons, currency, favorites, goalMonths, investmentGoal, isTelegram, notificationsEnabled, operations, portfolio, portfolioHistory, theme])
+  }, [cashFlows, cloudReady, completedLessons, currency, favorites, goalMonths, investmentGoal, isTelegram, notificationsEnabled, operations, portfolio, portfolioHistory, priceAlerts, theme])
 
   useEffect(() => {
     let active = true
@@ -867,11 +879,20 @@ function App() {
     .filter((payment) => new Date(payment.date).getTime() >= Date.now())
     .slice(0, 4)
   const notificationNews = marketNews.slice(0, 4)
+  const triggeredPriceAlerts = priceAlerts.flatMap((alert) => {
+    const instrument = instruments.find((item) => item.ticker === alert.ticker)
+    if (!instrument) return []
+    const triggered = alert.direction === 'above'
+      ? instrument.valuePrice >= alert.target
+      : instrument.valuePrice <= alert.target
+    return triggered ? [{ ...alert, instrument }] : []
+  })
   const unreadNotifications = notificationsEnabled && (!notificationsReadAt || [
     ...notificationPayments.map((item) => item.date),
     ...notificationNews.map((item) => item.publishedAt),
+    ...triggeredPriceAlerts.map((item) => item.createdAt),
   ].some((date) => new Date(date).getTime() > new Date(notificationsReadAt).getTime()))
-    ? notificationPayments.length + notificationNews.length
+    ? notificationPayments.length + notificationNews.length + triggeredPriceAlerts.length
     : 0
   const formatMoney = (rubles: number, maximumFractionDigits = currency === 'RUB' ? 0 : 2) =>
     new Intl.NumberFormat('ru-RU', {
@@ -1304,7 +1325,7 @@ function App() {
         <div className="profile-summary">
           <article><span>Стоимость</span><strong>{formatMoney(portfolioValue)}</strong></article>
           <article><span>Активов</span><strong>{portfolioItems.length}</strong></article>
-          <article><span>Уроков</span><strong>{completedLessons.length}/{lessons.length}</strong></article>
+          <article><span>Ценовых целей</span><strong>{priceAlerts.length}</strong></article>
         </div>
 
         <div className="settings-card">
@@ -1330,6 +1351,10 @@ function App() {
           </div>
           <button className="settings-link" type="button" onClick={() => setShowOperations(true)}><span className="settings-icon">⇄</span><div><strong>Операции</strong><small>Покупки, пополнения и дивиденды</small></div><b>›</b></button>
           <button className="settings-link" type="button" onClick={() => setActiveSection('analytics')}><span className="settings-icon">◔</span><div><strong>Аналитика</strong><small>Доходность и структура портфеля</small></div><b>›</b></button>
+          {priceAlerts.length > 0 && <div className="price-alert-settings">
+            <p>Ценовые уведомления</p>
+            {priceAlerts.map((alert) => <div key={alert.ticker}><span>{alert.ticker}</span><small>{alert.direction === 'above' ? 'выше' : 'ниже'} {alert.target.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</small><button type="button" onClick={() => setPriceAlerts((current) => current.filter((item) => item.ticker !== alert.ticker))}>×</button></div>)}
+          </div>}
         </div>
 
         <div className="settings-card data-card">
@@ -1429,6 +1454,11 @@ function App() {
               setDetailInstrument(null)
             }}>Калькулятор облигации</button>}
             <button className={`detail-favorite ${favorites.includes(detailInstrument.ticker) ? 'active' : ''}`} type="button" onClick={() => setFavorites((current) => current.includes(detailInstrument.ticker) ? current.filter((ticker) => ticker !== detailInstrument.ticker) : [...current, detailInstrument.ticker])}>{favorites.includes(detailInstrument.ticker) ? '★ В избранном' : '☆ Добавить в избранное'}</button>
+            <button className={`detail-alert ${priceAlerts.some((item) => item.ticker === detailInstrument.ticker) ? 'active' : ''}`} type="button" onClick={() => {
+              setAlertInstrument(detailInstrument)
+              setAlertPrice(String(priceAlerts.find((item) => item.ticker === detailInstrument.ticker)?.target ?? Math.round(detailInstrument.valuePrice * 1.05 * 100) / 100))
+              setDetailInstrument(null)
+            }}>{priceAlerts.some((item) => item.ticker === detailInstrument.ticker) ? '♢ Изменить ценовую цель' : '♢ Уведомить о цене'}</button>
             <button className="modal-submit" type="button" onClick={() => {
               const instrument = detailInstrument
               setDetailInstrument(null)
@@ -1489,6 +1519,14 @@ function App() {
                     <i>›</i>
                   </article>
                 ))}
+                {triggeredPriceAlerts.length > 0 && <p className="notification-group-title">Ценовые цели</p>}
+                {triggeredPriceAlerts.map((alert) => (
+                  <button className="notification-item price" type="button" key={alert.ticker} onClick={() => { setDetailInstrument(alert.instrument); setShowNotifications(false) }}>
+                    <span>↗</span>
+                    <div><strong>{alert.instrument.name}: цель достигнута</strong><small>Цена {alert.instrument.valuePrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ · цель {alert.target.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</small></div>
+                    <i>›</i>
+                  </button>
+                ))}
                 {notificationNews.length > 0 && <p className="notification-group-title">Важное на рынке</p>}
                 {notificationNews.map((item) => {
                   const impact = newsImpact(item.title)
@@ -1498,10 +1536,39 @@ function App() {
                     <i>›</i>
                   </button>
                 })}
-                {!notificationPayments.length && !notificationNews.length && <div className="notifications-empty"><span>✓</span><strong>Новых событий нет</strong><p>Здесь появятся выплаты и важные сообщения рынка.</p></div>}
+                {!notificationPayments.length && !notificationNews.length && !triggeredPriceAlerts.length && <div className="notifications-empty"><span>✓</span><strong>Новых событий нет</strong><p>Здесь появятся выплаты и важные сообщения рынка.</p></div>}
               </div>
             )}
           </section>
+        </div>
+      )}
+
+      {alertInstrument && (
+        <div className="modal-backdrop" onClick={() => setAlertInstrument(null)}>
+          <form className="asset-modal price-alert-modal" onClick={(event) => event.stopPropagation()} onSubmit={(event) => {
+            event.preventDefault()
+            const target = Number(alertPrice)
+            if (!Number.isFinite(target) || target <= 0) return
+            const alert: PriceAlert = {
+              ticker: alertInstrument.ticker,
+              target,
+              direction: target >= alertInstrument.valuePrice ? 'above' : 'below',
+              createdAt: new Date().toISOString(),
+            }
+            setPriceAlerts((current) => [...current.filter((item) => item.ticker !== alert.ticker), alert])
+            setNotificationsEnabled(true)
+            setAlertInstrument(null)
+          }}>
+            <button className="modal-close" type="button" onClick={() => setAlertInstrument(null)} aria-label="Закрыть">×</button>
+            <span className="advice-orb">♢</span>
+            <p className="eyebrow">ЦЕНОВОЕ УВЕДОМЛЕНИЕ</p>
+            <h2>{alertInstrument.name}</h2>
+            <p className="modal-caption">Сейчас {alertInstrument.valuePrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽. Событие появится в центре уведомлений после достижения цели.</p>
+            <label>Целевая цена, ₽<input type="number" min="0.01" step="0.01" value={alertPrice} onChange={(event) => setAlertPrice(event.target.value)} autoFocus /></label>
+            <div className="alert-direction"><span>Условие</span><strong>{Number(alertPrice) >= alertInstrument.valuePrice ? 'Цена поднимется до цели' : 'Цена снизится до цели'}</strong></div>
+            <button className="modal-submit" type="submit">Сохранить уведомление</button>
+            {priceAlerts.some((item) => item.ticker === alertInstrument.ticker) && <button className="delete-alert" type="button" onClick={() => { setPriceAlerts((current) => current.filter((item) => item.ticker !== alertInstrument.ticker)); setAlertInstrument(null) }}>Удалить ценовую цель</button>}
+          </form>
         </div>
       )}
 
