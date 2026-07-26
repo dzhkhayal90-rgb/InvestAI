@@ -87,7 +87,7 @@ type MarketNews = {
 }
 
 type Currency = 'RUB' | 'USD' | 'EUR'
-type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news' | 'profile'
+type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news'
 type DetailTab = 'overview' | 'events' | 'income' | 'operations'
 
 const companyDomains: Record<string, string> = {
@@ -268,7 +268,6 @@ function App() {
   const [cashFlowTicker, setCashFlowTicker] = useState('')
   const [cashFlowDate, setCashFlowDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [paymentFilter, setPaymentFilter] = useState<'Все' | 'Купоны' | 'Дивиденды'>('Все')
-  const [selectedCalendarDay, setSelectedCalendarDay] = useState(0)
   const [bondCalculator, setBondCalculator] = useState<Instrument | null>(null)
   const [calculatorQuantity, setCalculatorQuantity] = useState('1')
   const [showGoal, setShowGoal] = useState(false)
@@ -360,6 +359,10 @@ function App() {
         .filter((item) => item.kind === 'Облигация' && item.couponValue && item.couponDate)
         .sort((a, b) => new Date(a.couponDate!).getTime() - new Date(b.couponDate!).getTime())
         .slice(0, 4)
+  const expectedCoupons = portfolioBonds.reduce(
+    (sum, bond) => sum + (bond.couponValue ?? 0) * portfolio[bond.ticker].quantity,
+    0,
+  )
   const allocationItems = portfolioItems
     .map((instrument) => ({
       instrument,
@@ -816,7 +819,7 @@ function App() {
         <nav className="site-nav" aria-label="Навигация">
           {sections.map((section) => <a href={section.href} key={section.href}>{section.label}</a>)}
         </nav>
-        {isTelegram && <div className="telegram-header-actions"><button type="button" onClick={() => setActiveSection('coupons')} aria-label="Уведомления">♢</button><button className="header-avatar" type="button" onClick={() => setActiveSection('profile')} aria-label="Открыть профиль"><img src={`${import.meta.env.BASE_URL}investai-logo.png`} alt="" /></button></div>}
+        {isTelegram && <div className="telegram-header-actions"><span className={`sync-dot ${syncStatus}`}>{syncStatus === 'synced' ? '☁' : '•'}</span><button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label="Переключить тему">{theme === 'dark' ? '☀' : '☾'}</button></div>}
         <a className="header-button" href="#market">Начать</a>
       </header>
 
@@ -845,9 +848,8 @@ function App() {
 
         <section className="dashboard-grid" id="portfolio">
           <div>
-            <p className="eyebrow">ДОБРО ПОЖАЛОВАТЬ</p>
-            <h2>{isTelegram ? `Доброе утро, ${name}! 👋` : 'Ваш портфель'}</h2>
-            {isTelegram && <p className="dashboard-subtitle">Всё важное о ваших инвестициях на сегодня</p>}
+            <p className="eyebrow">ЛИЧНЫЙ КАБИНЕТ</p>
+            <h2>{isTelegram ? 'Главная' : 'Ваш портфель'}</h2>
           </div>
           <div className={`status-pill ${marketStatus === 'error' ? 'status-error' : ''}`}>
             ● {marketStatus === 'loading' ? 'Загрузка MOEX' : marketStatus === 'live' ? 'Данные MOEX' : 'Нет связи с MOEX'}
@@ -872,7 +874,6 @@ function App() {
               <button className={resultPeriod === 'all' ? 'active' : undefined} type="button" onClick={() => setResultPeriod('all')}>Всё время</button>
             </div>
             <div className={displayedProfit >= 0 ? 'yield-chip' : 'yield-chip negative'}>{portfolioItems.length ? `${displayedProfit >= 0 ? '+' : ''}${formatMoney(displayedProfit, 2)} · ${displayedProfitPercent >= 0 ? '+' : ''}${displayedProfitPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : 'Портфель ещё не заполнен'}</div>
-            {isTelegram && portfolioItems.length > 0 && <svg className="hero-mini-chart" viewBox="0 0 100 42" preserveAspectRatio="none" aria-label="Динамика портфеля"><polygon points={`0,42 ${chartPoints} 100,42`} fill="rgba(54,216,116,.12)" /><polyline points={chartPoints} fill="none" stroke="#38d878" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
             {portfolioItems.length > 0 && (
               <div className="portfolio-meta">
                 <span><small>Вложено</small><strong>{formatMoney(investedValue)}</strong></span>
@@ -888,8 +889,8 @@ function App() {
             </div> : <a className="primary-button" href="#market">＋ Добавить актив</a>}
           </article>
           <div className="quick-stats">
-            <article><div><p>Доход за месяц</p><strong className="up">{profit >= 0 ? '+' : ''}{formatMoney(profit, 0)}</strong><small>{profitPercent >= 0 ? '+' : ''}{profitPercent.toFixed(1)}% к портфелю</small></div></article>
-            <article><div><p>Следующая выплата</p><strong>{portfolioBonds[0]?.date ?? 'Нет данных'}</strong><small>{portfolioBonds[0] ? `${portfolioBonds[0].ticker} · ${portfolioBonds[0].coupon ?? ''}` : 'Добавьте облигации'}</small></div></article>
+            <article><span className="stat-icon pink">₽</span><div><p>Ближайшие купоны</p><strong>{portfolioBonds.length ? `${expectedCoupons.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : 'Добавьте облигации'}</strong></div></article>
+            <article><span className="stat-icon blue">◷</span><div><p>Следующая выплата</p><strong>{portfolioBonds[0]?.date ?? 'Нет данных'}</strong></div></article>
           </div>
         </section>
         {portfolioItems.length > 0 && (
@@ -956,25 +957,8 @@ function App() {
       </section>
 
       <section className="market-section" id="market">
-        <div className="portfolio-screen-head"><h2>Портфель</h2></div>
-        <article className="portfolio-overview-card">
-          <div className="portfolio-overview-top">
-            <div><small>Стоимость портфеля</small><strong>{formatMoney(portfolioValue, 0)}</strong><span className={profit >= 0 ? 'up' : 'down'}>{profit >= 0 ? '+' : ''}{formatMoney(profit, 0)} · {profitPercent.toFixed(1)}%</span></div>
-            <div className="mini-donut" style={{ background: portfolioItems.length ? `conic-gradient(${allocationGradient})` : 'conic-gradient(#2d3a42 0 100%)' }}><i /></div>
-          </div>
-          <div className="portfolio-tabs">
-            <button className={marketFilter === 'Все' ? 'active' : ''} type="button" onClick={() => setMarketFilter('Все')}>Все</button>
-            <button className={marketFilter === 'ОФЗ' || marketFilter === 'Корпоративные' ? 'active' : ''} type="button" onClick={() => setMarketFilter('ОФЗ')}>Облигации</button>
-            <button className={marketFilter === 'Акции' ? 'active' : ''} type="button" onClick={() => setMarketFilter('Акции')}>Акции</button>
-            <button type="button" onClick={() => { setMarketQuery('ETF'); setMarketFilter('Все') }}>ETF</button>
-          </div>
-          <div className="portfolio-breakdown">
-            <div><span className="breakdown-icon bond">▰</span><p>Облигации<small>{portfolioItems.filter((item) => item.kind === 'Облигация').length} бумаг</small></p><strong>{formatMoney(portfolioItems.filter((item) => item.kind === 'Облигация').reduce((sum, item) => sum + item.valuePrice * portfolio[item.ticker].quantity, 0))}</strong></div>
-            <div><span className="breakdown-icon stock">▥</span><p>Акции<small>{portfolioItems.filter((item) => item.kind === 'Акция').length} бумаг</small></p><strong>{formatMoney(portfolioItems.filter((item) => item.kind === 'Акция').reduce((sum, item) => sum + item.valuePrice * portfolio[item.ticker].quantity, 0))}</strong></div>
-          </div>
-        </article>
         <div className="section-heading">
-          <div><p className="eyebrow">ТОП-АКТИВЫ</p><h2>Акции и облигации</h2></div>
+          <div><p className="eyebrow">КАТАЛОГ MOEX</p><h2>Акции и облигации</h2></div>
           <span className={`demo-label ${marketStatus}`}>
             {marketStatus === 'loading'
               ? 'обновляем…'
@@ -1081,15 +1065,7 @@ function App() {
       </section>
 
       <section className="coupon-section" id="coupons">
-        <div className="calendar-screen-head"><h2>Календарь выплат</h2><strong>{new Date().toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</strong></div>
-        <div className="calendar-week">
-          {Array.from({ length: 7 }, (_, index) => {
-            const date = new Date()
-            date.setDate(date.getDate() - 3 + index)
-            return <button className={selectedCalendarDay === index - 3 ? 'active' : ''} type="button" onClick={() => setSelectedCalendarDay(index - 3)} key={date.toISOString()}><small>{date.toLocaleDateString('ru-RU', { weekday: 'short' }).slice(0, 2)}</small><strong>{date.getDate()}</strong></button>
-          })}
-        </div>
-        <div className="section-heading calendar-list-title"><div><p className="eyebrow">БЛИЖАЙШИЕ СОБЫТИЯ</p><h2>{portfolioBonds.length || dividends ? 'Купоны и дивиденды' : 'Ближайшие купоны MOEX'}</h2></div></div>
+        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>{portfolioBonds.length || dividends ? 'Купоны и дивиденды' : 'Ближайшие купоны MOEX'}</h2></div></div>
         {(paymentMonths.length > 0 || dividends > 0) && <div className="payment-filters" role="group" aria-label="Тип выплаты">
           {(['Все', 'Купоны', 'Дивиденды'] as const).map((filter) => <button className={paymentFilter === filter ? 'active' : ''} type="button" onClick={() => setPaymentFilter(filter)} key={filter}>{filter}</button>)}
         </div>}
@@ -1155,13 +1131,6 @@ function App() {
       </section>
 
       <section className="ai-section" id="ai">
-        <div className="ai-screen-title"><h2>AI-помощник</h2><p>Ваш персональный помощник по инвестициям</p></div>
-        <div className="ai-robot" aria-hidden="true"><span>●</span><span>●</span><i /></div>
-        <div className="ai-message">Привет! Я ваш AI-помощник. Чем могу помочь?</div>
-        <div className="ai-prompts">
-          {['Сколько я получу в августе?', 'Какие выплаты ближайшие?', 'Какие облигации самые доходные?', 'Сколько налога уже удержано?', 'Какие активы занимают большую долю?'].map((prompt) => <button type="button" onClick={() => setShowAdvice(true)} key={prompt}>{prompt}<span>›</span></button>)}
-        </div>
-        <button className="ai-input" type="button" onClick={() => setShowAdvice(true)}><span>Задайте вопрос…</span><i>➤</i></button>
         <div className="ai-card">
           <span className="ai-orb">✦</span>
           <div>
@@ -1220,33 +1189,15 @@ function App() {
         </div>
       </section>
 
-      <section className="profile-section" id="profile">
-        <div className="profile-heading"><h2>Профиль</h2></div>
-        <article className="profile-card">
-          <div className="profile-avatar"><img src={`${import.meta.env.BASE_URL}investai-logo.png`} alt="" /></div>
-          <div><strong>{name === 'инвестор' ? 'Инвестор' : name}</strong><small>Telegram · данные синхронизируются</small></div>
-          <span>Premium</span>
-        </article>
-        <div className="profile-menu">
-          <button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}><span>◐</span><div><strong>Тема оформления</strong><small>{theme === 'dark' ? 'Тёмная' : 'Светлая'}</small></div><i>›</i></button>
-          <button type="button" onClick={() => setCurrency((current) => current === 'RUB' ? 'USD' : current === 'USD' ? 'EUR' : 'RUB')}><span>₽</span><div><strong>Основная валюта</strong><small>{currency}</small></div><i>›</i></button>
-          <button type="button" onClick={() => setShowOperations(true)}><span>⇩</span><div><strong>Экспорт и импорт</strong><small>Резервная копия портфеля</small></div><i>›</i></button>
-          <button type="button" onClick={() => setActiveSection('coupons')}><span>♢</span><div><strong>Уведомления</strong><small>Купоны и дивиденды</small></div><i>›</i></button>
-          <button type="button" onClick={() => setShowAdvice(true)}><span>⌾</span><div><strong>Безопасность</strong><small>{syncStatus === 'synced' ? 'Сохранено в Telegram' : 'Локальное хранение'}</small></div><i>›</i></button>
-          <button type="button" onClick={() => setActiveSection('news')}><span>◫</span><div><strong>Новости рынка</strong><small>События и влияние на активы</small></div><i>›</i></button>
-        </div>
-        <p className="profile-note">InvestAI хранит данные портфеля в вашем Telegram и на устройстве. Приложение не совершает биржевые операции.</p>
-      </section>
-
       </main>
       <footer><span>InvestAI</span><p>Демонстрационный сервис. Не является инвестиционной рекомендацией.</p></footer>
 
       <nav className="telegram-nav" aria-label="Навигация приложения">
-        <button className={activeSection === 'portfolio' ? 'active' : undefined} type="button" onClick={() => setActiveSection('portfolio')}><span>⌂</span>Главная</button>
-        <button className={activeSection === 'market' || activeSection === 'analytics' ? 'active' : undefined} type="button" onClick={() => setActiveSection('market')}><span>▣</span>Портфель</button>
-        <button className={activeSection === 'coupons' ? 'active' : undefined} type="button" onClick={() => setActiveSection('coupons')}><span>▦</span>Календарь</button>
-        <button className={activeSection === 'ai' || activeSection === 'news' ? 'active' : undefined} type="button" onClick={() => setActiveSection('ai')}><span>◉</span>AI</button>
-        <button className={activeSection === 'profile' ? 'active' : undefined} type="button" onClick={() => setActiveSection('profile')}><span>♙</span>Профиль</button>
+        <button className={activeSection === 'portfolio' ? 'active' : undefined} type="button" onClick={() => setActiveSection('portfolio')}><span>▣</span>Главная</button>
+        <button className={activeSection === 'market' ? 'active' : undefined} type="button" onClick={() => setActiveSection('market')}><span>◔</span>Рынок</button>
+        <button className={activeSection === 'coupons' ? 'active' : undefined} type="button" onClick={() => setActiveSection('coupons')}><span>₽</span>Купоны</button>
+        <button className={activeSection === 'news' ? 'active' : undefined} type="button" onClick={() => setActiveSection('news')}><span>◫</span>Новости</button>
+        <button className={activeSection === 'ai' ? 'active' : undefined} type="button" onClick={() => setActiveSection('ai')}><span>✦</span>AI</button>
       </nav>
 
       {selectedInstrument && (
