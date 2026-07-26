@@ -703,8 +703,17 @@ function App() {
     setNotice(`${cashFlowType} сохранено`)
   }
 
-  const downloadFile = (content: BlobPart, type: string, filename: string) => {
-    const url = URL.createObjectURL(new Blob([content], { type }))
+  const downloadFile = async (content: BlobPart, type: string, filename: string, useSystemShare = false) => {
+    const file = new File([content], filename, { type })
+    if (useSystemShare && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'Учёт InvestAI' })
+        return
+      } catch {
+        // Если системное окно закрыли или оно недоступно, пробуем обычное скачивание.
+      }
+    }
+    const url = URL.createObjectURL(file)
     const link = document.createElement('a')
     link.href = url
     link.download = filename
@@ -731,10 +740,10 @@ function App() {
       portfolioHistory,
       cashFlows,
     }, null, 2)
-    downloadFile(data, 'application/json;charset=utf-8', `investai-backup-${new Date().toISOString().slice(0, 10)}.json`)
+    void downloadFile(data, 'application/json;charset=utf-8', `investai-backup-${new Date().toISOString().slice(0, 10)}.json`)
   }
 
-  const exportAccountingExcel = () => {
+  const exportAccountingExcel = async () => {
     const escapeXml = (value: string | number) => String(value)
       .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
     const cell = (value: string | number, type: 'String' | 'Number' = 'String') =>
@@ -786,7 +795,7 @@ function App() {
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
 ${worksheets}
 </Workbook>`
-    downloadFile(workbook, 'application/vnd.ms-excel;charset=utf-8', `investai-accounting-${new Date().toISOString().slice(0, 10)}.xls`)
+    await downloadFile(workbook, 'application/vnd.ms-excel;charset=utf-8', `investai-accounting-${new Date().toISOString().slice(0, 10)}.xls`, isTelegram)
     setShowExcelExport(false)
     setNotice('Excel-файл сформирован')
   }
@@ -1829,8 +1838,8 @@ ${worksheets}
               <label>С даты<input type="date" value={exportFrom} onChange={(event) => setExportFrom(event.target.value)} /></label>
               <label>По дату<input type="date" value={exportTo} onChange={(event) => setExportTo(event.target.value)} /></label>
             </div>
-            <p className="detail-note">Если даты не указаны, в файл попадут данные за весь период. Формат совместим с Microsoft Excel.</p>
-            <button className="modal-submit excel-download-submit" type="button" onClick={exportAccountingExcel}>↓ Сформировать и скачать Excel</button>
+            <p className="detail-note">Если даты не указаны, в файл попадут данные за весь период. В Telegram откроется системное меню — выберите «Сохранить в Файлы» или Excel.</p>
+            <button className="modal-submit excel-download-submit" type="button" onClick={() => { void exportAccountingExcel() }}>↓ Сформировать и скачать Excel</button>
           </section>
         </div>
       )}
