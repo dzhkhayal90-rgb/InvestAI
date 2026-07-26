@@ -87,7 +87,7 @@ type MarketNews = {
 }
 
 type Currency = 'RUB' | 'USD' | 'EUR'
-type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news'
+type AppSection = 'portfolio' | 'market' | 'coupons' | 'ai' | 'analytics' | 'news' | 'profile'
 type DetailTab = 'overview' | 'events' | 'income' | 'operations'
 
 const companyDomains: Record<string, string> = {
@@ -848,8 +848,9 @@ function App() {
 
         <section className="dashboard-grid" id="portfolio">
           <div>
-            <p className="eyebrow">ЛИЧНЫЙ КАБИНЕТ</p>
-            <h2>{isTelegram ? 'Главная' : 'Ваш портфель'}</h2>
+            <p className="eyebrow">ДОБРО ПОЖАЛОВАТЬ</p>
+            <h2>{isTelegram ? `Доброе утро, ${name}! 👋` : 'Ваш портфель'}</h2>
+            {isTelegram && <p className="dashboard-subtitle">Всё важное о ваших инвестициях на сегодня</p>}
           </div>
           <div className={`status-pill ${marketStatus === 'error' ? 'status-error' : ''}`}>
             ● {marketStatus === 'loading' ? 'Загрузка MOEX' : marketStatus === 'live' ? 'Данные MOEX' : 'Нет связи с MOEX'}
@@ -874,6 +875,7 @@ function App() {
               <button className={resultPeriod === 'all' ? 'active' : undefined} type="button" onClick={() => setResultPeriod('all')}>Всё время</button>
             </div>
             <div className={displayedProfit >= 0 ? 'yield-chip' : 'yield-chip negative'}>{portfolioItems.length ? `${displayedProfit >= 0 ? '+' : ''}${formatMoney(displayedProfit, 2)} · ${displayedProfitPercent >= 0 ? '+' : ''}${displayedProfitPercent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` : 'Портфель ещё не заполнен'}</div>
+            {isTelegram && portfolioItems.length > 0 && <svg className="hero-mini-chart" viewBox="0 0 100 42" preserveAspectRatio="none" aria-label="Динамика портфеля"><polygon points={`0,42 ${chartPoints} 100,42`} fill="rgba(54,216,116,.12)" /><polyline points={chartPoints} fill="none" stroke="#38d878" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
             {portfolioItems.length > 0 && (
               <div className="portfolio-meta">
                 <span><small>Вложено</small><strong>{formatMoney(investedValue)}</strong></span>
@@ -1189,15 +1191,32 @@ function App() {
         </div>
       </section>
 
+      <section className="profile-section" id="profile">
+        <div className="profile-heading"><h2>Профиль</h2></div>
+        <article className="profile-card">
+          <div className="profile-avatar"><img src={`${import.meta.env.BASE_URL}investai-logo.png`} alt="" /></div>
+          <div><strong>{name === 'инвестор' ? 'Инвестор' : name}</strong><small>Telegram · данные синхронизируются</small></div>
+          <span>Premium</span>
+        </article>
+        <div className="profile-menu">
+          <button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}><span>◐</span><div><strong>Тема оформления</strong><small>{theme === 'dark' ? 'Тёмная' : 'Светлая'}</small></div><i>›</i></button>
+          <button type="button" onClick={() => setCurrency((current) => current === 'RUB' ? 'USD' : current === 'USD' ? 'EUR' : 'RUB')}><span>₽</span><div><strong>Основная валюта</strong><small>{currency}</small></div><i>›</i></button>
+          <button type="button" onClick={() => setShowOperations(true)}><span>⇩</span><div><strong>Экспорт и импорт</strong><small>Резервная копия портфеля</small></div><i>›</i></button>
+          <button type="button" onClick={() => setActiveSection('coupons')}><span>♢</span><div><strong>Уведомления</strong><small>Купоны и дивиденды</small></div><i>›</i></button>
+          <button type="button" onClick={() => setShowAdvice(true)}><span>⌾</span><div><strong>Безопасность данных</strong><small>{syncStatus === 'synced' ? 'Сохранено в Telegram' : 'Локальное хранение'}</small></div><i>›</i></button>
+        </div>
+        <p className="profile-note">InvestAI хранит данные портфеля в вашем Telegram и на устройстве. Приложение не совершает биржевые операции.</p>
+      </section>
+
       </main>
       <footer><span>InvestAI</span><p>Демонстрационный сервис. Не является инвестиционной рекомендацией.</p></footer>
 
       <nav className="telegram-nav" aria-label="Навигация приложения">
-        <button className={activeSection === 'portfolio' ? 'active' : undefined} type="button" onClick={() => setActiveSection('portfolio')}><span>▣</span>Главная</button>
-        <button className={activeSection === 'market' ? 'active' : undefined} type="button" onClick={() => setActiveSection('market')}><span>◔</span>Рынок</button>
-        <button className={activeSection === 'coupons' ? 'active' : undefined} type="button" onClick={() => setActiveSection('coupons')}><span>₽</span>Купоны</button>
-        <button className={activeSection === 'news' ? 'active' : undefined} type="button" onClick={() => setActiveSection('news')}><span>◫</span>Новости</button>
-        <button className={activeSection === 'ai' ? 'active' : undefined} type="button" onClick={() => setActiveSection('ai')}><span>✦</span>AI</button>
+        <button className={activeSection === 'portfolio' ? 'active' : undefined} type="button" onClick={() => setActiveSection('portfolio')}><span>⌂</span>Главная</button>
+        <button className={activeSection === 'market' || activeSection === 'analytics' ? 'active' : undefined} type="button" onClick={() => setActiveSection('market')}><span>▣</span>Портфель</button>
+        <button className={activeSection === 'coupons' ? 'active' : undefined} type="button" onClick={() => setActiveSection('coupons')}><span>▦</span>Календарь</button>
+        <button className={activeSection === 'ai' || activeSection === 'news' ? 'active' : undefined} type="button" onClick={() => setActiveSection('ai')}><span>◉</span>AI</button>
+        <button className={activeSection === 'profile' ? 'active' : undefined} type="button" onClick={() => setActiveSection('profile')}><span>♙</span>Профиль</button>
       </nav>
 
       {selectedInstrument && (
