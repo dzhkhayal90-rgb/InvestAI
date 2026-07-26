@@ -241,6 +241,8 @@ function App() {
   const [currencyRates, setCurrencyRates] = useState<Record<Currency, number>>({ RUB: 1, USD: 90, EUR: 98 })
   const [theme, setTheme] = useState<'dark' | 'light'>(() => localStorage.getItem('investai-theme') === 'light' ? 'light' : 'dark')
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('investai-notifications') !== 'off')
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [notificationsReadAt, setNotificationsReadAt] = useState(() => localStorage.getItem('investai-notifications-read') ?? '')
   const [cloudReady, setCloudReady] = useState(false)
   const [syncStatus, setSyncStatus] = useState<'local' | 'syncing' | 'synced'>('local')
   const [portfolio, setPortfolio] = useState<Record<string, Position>>(() => {
@@ -702,6 +704,10 @@ function App() {
   }, [notificationsEnabled])
 
   useEffect(() => {
+    if (notificationsReadAt) localStorage.setItem('investai-notifications-read', notificationsReadAt)
+  }, [notificationsReadAt])
+
+  useEffect(() => {
     const loadCurrencyRates = async () => {
       try {
         const response = await fetch('https://www.cbr-xml-daily.ru/daily_json.js')
@@ -857,6 +863,16 @@ function App() {
     const impactLabel = newsImpact(item.title).label
     return impactLabel === newsFilter || (newsFilter === 'Рынок' && impactLabel === 'Весь рынок')
   })
+  const notificationPayments = paymentEvents
+    .filter((payment) => new Date(payment.date).getTime() >= Date.now())
+    .slice(0, 4)
+  const notificationNews = marketNews.slice(0, 4)
+  const unreadNotifications = notificationsEnabled && (!notificationsReadAt || [
+    ...notificationPayments.map((item) => item.date),
+    ...notificationNews.map((item) => item.publishedAt),
+  ].some((date) => new Date(date).getTime() > new Date(notificationsReadAt).getTime()))
+    ? notificationPayments.length + notificationNews.length
+    : 0
   const formatMoney = (rubles: number, maximumFractionDigits = currency === 'RUB' ? 0 : 2) =>
     new Intl.NumberFormat('ru-RU', {
       style: 'currency',
@@ -894,6 +910,7 @@ function App() {
         </nav>
         {isTelegram && <div className="telegram-header-actions">
           <span className={`sync-dot ${syncStatus}`}>{syncStatus === 'synced' ? '☁' : '•'}</span>
+          <button className="notification-button" type="button" onClick={() => setShowNotifications(true)} aria-label={`Уведомления${unreadNotifications ? `, новых: ${unreadNotifications}` : ''}`}>♢{unreadNotifications > 0 && <i>{Math.min(9, unreadNotifications)}</i>}</button>
           <button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label="Переключить тему">{theme === 'dark' ? '☀' : '☾'}</button>
           <button className="profile-avatar-button" type="button" onClick={() => setActiveSection('profile')} aria-label="Открыть профиль">{name.slice(0, 1).toLocaleUpperCase('ru')}</button>
         </div>}
@@ -1448,6 +1465,42 @@ function App() {
             </form>
             <p className="advice-disclaimer">Демонстрационный анализ, не инвестиционная рекомендация.</p>
             <button className="modal-submit" type="button" onClick={() => setShowAdvice(false)}>Понятно</button>
+          </section>
+        </div>
+      )}
+
+      {showNotifications && (
+        <div className="modal-backdrop" onClick={() => setShowNotifications(false)}>
+          <section className="asset-modal notifications-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setShowNotifications(false)} aria-label="Закрыть">×</button>
+            <div className="notifications-title">
+              <div><p className="eyebrow">ЦЕНТР СОБЫТИЙ</p><h2>Уведомления</h2></div>
+              {unreadNotifications > 0 && <button type="button" onClick={() => setNotificationsReadAt(new Date().toISOString())}>Прочитать всё</button>}
+            </div>
+            {!notificationsEnabled ? (
+              <div className="notifications-empty"><span>♢</span><strong>Уведомления выключены</strong><p>Включите их в профиле, чтобы видеть выплаты и важные новости.</p><button type="button" onClick={() => { setNotificationsEnabled(true); setShowNotifications(false); setActiveSection('profile') }}>Открыть настройки</button></div>
+            ) : (
+              <div className="notification-feed">
+                {notificationPayments.length > 0 && <p className="notification-group-title">Ближайшие выплаты</p>}
+                {notificationPayments.map((payment) => (
+                  <article className="notification-item payment" key={payment.id}>
+                    <span>₽</span>
+                    <div><strong>{payment.type}: {payment.title}</strong><small>{new Date(payment.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })} · {payment.amount.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</small></div>
+                    <i>›</i>
+                  </article>
+                ))}
+                {notificationNews.length > 0 && <p className="notification-group-title">Важное на рынке</p>}
+                {notificationNews.map((item) => {
+                  const impact = newsImpact(item.title)
+                  return <button className="notification-item news" type="button" key={item.id} onClick={() => { setNewsFilter(impact.label === 'Облигации' || impact.label === 'Акции' ? impact.label : 'Рынок'); setShowNotifications(false); setActiveSection('news') }}>
+                    <span>◫</span>
+                    <div><strong>{item.title}</strong><small>{impact.label} · {new Date(item.publishedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</small></div>
+                    <i>›</i>
+                  </button>
+                })}
+                {!notificationPayments.length && !notificationNews.length && <div className="notifications-empty"><span>✓</span><strong>Новых событий нет</strong><p>Здесь появятся выплаты и важные сообщения рынка.</p></div>}
+              </div>
+            )}
           </section>
         </div>
       )}
