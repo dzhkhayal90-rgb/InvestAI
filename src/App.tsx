@@ -94,6 +94,7 @@ type DetailTab = 'overview' | 'events' | 'income' | 'operations'
 type AnalyticsPeriod = 'day' | 'month' | 'sixMonths' | 'year' | 'all'
 type NewsFilter = 'Все' | 'Рынок' | 'Акции' | 'Облигации'
 type PriceAlert = { ticker: string; target: number; direction: 'above' | 'below'; createdAt: string }
+type ExportSection = 'portfolio' | 'bonds' | 'coupons' | 'dividends' | 'operations' | 'cashFlows'
 type DividendRecord = {
   ticker: string
   date: string
@@ -310,6 +311,17 @@ function App() {
   const [cashFlowTicker, setCashFlowTicker] = useState('')
   const [cashFlowDate, setCashFlowDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [paymentFilter, setPaymentFilter] = useState<'Все' | 'Купоны' | 'Дивиденды'>('Все')
+  const [showExcelExport, setShowExcelExport] = useState(false)
+  const [exportFrom, setExportFrom] = useState('')
+  const [exportTo, setExportTo] = useState('')
+  const [exportSections, setExportSections] = useState<Record<ExportSection, boolean>>({
+    portfolio: true,
+    bonds: true,
+    coupons: true,
+    dividends: true,
+    operations: true,
+    cashFlows: true,
+  })
   const [bondCalculator, setBondCalculator] = useState<Instrument | null>(null)
   const [calculatorQuantity, setCalculatorQuantity] = useState('1')
   const [showGoal, setShowGoal] = useState(false)
@@ -691,6 +703,21 @@ function App() {
     setNotice(`${cashFlowType} сохранено`)
   }
 
+  const downloadFile = (content: BlobPart, type: string, filename: string) => {
+    const url = URL.createObjectURL(new Blob([content], { type }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.rel = 'noopener'
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    window.setTimeout(() => {
+      link.remove()
+      URL.revokeObjectURL(url)
+    }, 1500)
+  }
+
   const exportPortfolio = () => {
     const data = JSON.stringify({
       version: 1,
@@ -704,12 +731,7 @@ function App() {
       portfolioHistory,
       cashFlows,
     }, null, 2)
-    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `investai-backup-${new Date().toISOString().slice(0, 10)}.json`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadFile(data, 'application/json;charset=utf-8', `investai-backup-${new Date().toISOString().slice(0, 10)}.json`)
   }
 
   const exportAccountingExcel = () => {
@@ -721,35 +743,52 @@ function App() {
       `<Row>${values.map((value) => cell(value, typeof value === 'number' ? 'Number' : 'String')).join('')}</Row>`
     const sheet = (name: string, headers: string[], rows: Array<Array<string | number>>) =>
       `<Worksheet ss:Name="${escapeXml(name)}"><Table>${row(headers)}${rows.map(row).join('')}</Table></Worksheet>`
+    const inPeriod = (date: string) => {
+      const value = date.slice(0, 10)
+      return (!exportFrom || value >= exportFrom) && (!exportTo || value <= exportTo)
+    }
     const portfolioRows = portfolioItems.map((item) => {
       const position = portfolio[item.ticker]
       const currentValue = item.valuePrice * position.quantity
       return [item.ticker, item.name, item.kind, position.quantity, position.buyPrice, item.valuePrice, currentValue, currentValue - position.buyPrice * position.quantity]
     })
-    const operationRows = operations.map((item) => [
+    const bondRows = portfolioBonds.map((item) => {
+      const position = portfolio[item.ticker]
+      return [item.ticker, item.name, position.quantity, position.buyPrice, item.valuePrice, item.faceValue ?? 0, item.couponValue ?? 0, item.yieldValue ?? 0, item.maturityDate ?? '']
+    })
+    const couponRows = paymentEvents.filter((item) => item.type === 'Купон' && inPeriod(item.date)).map((item) => [
+      new Date(item.date).toLocaleDateString('ru-RU'), item.title, item.amount, 'Купон',
+    ])
+    const operationRows = operations.filter((item) => inPeriod(item.date)).map((item) => [
       new Date(item.date).toLocaleDateString('ru-RU'), item.ticker, item.name, item.type,
       item.quantity, item.price, item.commission ?? 0, item.realizedProfit ?? 0,
     ])
-    const moneyRows = cashFlows.map((item) => [
+    const moneyRows = cashFlows.filter((item) => inPeriod(item.date)).map((item) => [
       new Date(item.date).toLocaleDateString('ru-RU'), item.type, item.ticker ?? '', item.amount, item.note ?? '',
     ])
-    const dividendRows = portfolioDividendRecords.map((item) => [
+    const dividendRows = portfolioDividendRecords.filter((item) => inPeriod(item.date)).map((item) => [
       new Date(`${item.date}T12:00:00`).toLocaleDateString('ru-RU'), item.ticker, item.name,
       item.date >= todayKey ? 'Утверждён' : 'Выплачен', item.value, item.quantity, item.value * item.quantity, item.currency,
     ])
+    const worksheets = [
+      exportSections.portfolio && sheet('Портфель', ['Тикер', 'Название', 'Тип', 'Количество', 'Средняя цена', 'Текущая цена', 'Стоимость', 'Результат'], portfolioRows),
+      exportSections.bonds && sheet('Облигации', ['Тикер', 'Название', 'Количество', 'Средняя цена', 'Текущая цена', 'Номинал', 'Купон', 'Доходность, %', 'Погашение'], bondRows),
+      exportSections.coupons && sheet('Купоны', ['Дата', 'Облигация', 'Сумма', 'Тип'], couponRows),
+      exportSections.dividends && sheet('Дивиденды', ['Дата реестра', 'Тикер', 'Компания', 'Статус', 'На акцию', 'Количество', 'Сумма', 'Валюта'], dividendRows),
+      exportSections.operations && sheet('Сделки', ['Дата', 'Тикер', 'Название', 'Операция', 'Количество', 'Цена', 'Комиссия', 'Реализованная прибыль'], operationRows),
+      exportSections.cashFlows && sheet('Движение денег', ['Дата', 'Тип', 'Тикер', 'Сумма', 'Комментарий'], moneyRows),
+    ].filter(Boolean).join('')
+    if (!worksheets) {
+      setNotice('Выберите хотя бы один раздел для Excel')
+      return
+    }
     const workbook = `<?xml version="1.0" encoding="UTF-8"?><?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-${sheet('Портфель', ['Тикер', 'Название', 'Тип', 'Количество', 'Средняя цена', 'Текущая цена', 'Стоимость', 'Результат'], portfolioRows)}
-${sheet('Сделки', ['Дата', 'Тикер', 'Название', 'Операция', 'Количество', 'Цена', 'Комиссия', 'Реализованная прибыль'], operationRows)}
-${sheet('Движение денег', ['Дата', 'Тип', 'Тикер', 'Сумма', 'Комментарий'], moneyRows)}
-${sheet('Дивиденды', ['Дата реестра', 'Тикер', 'Компания', 'Статус', 'На акцию', 'Количество', 'Сумма', 'Валюта'], dividendRows)}
+${worksheets}
 </Workbook>`
-    const url = URL.createObjectURL(new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `investai-accounting-${new Date().toISOString().slice(0, 10)}.xls`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadFile(workbook, 'application/vnd.ms-excel;charset=utf-8', `investai-accounting-${new Date().toISOString().slice(0, 10)}.xls`)
+    setShowExcelExport(false)
+    setNotice('Excel-файл сформирован')
   }
 
   const importPortfolio = async (file?: File) => {
@@ -1330,7 +1369,12 @@ ${sheet('Дивиденды', ['Дата реестра', 'Тикер', 'Ком�
       </section>
 
       <section className="coupon-section" id="coupons">
-        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>Купоны и дивиденды</h2></div></div>
+        <div className="section-heading"><div><p className="eyebrow">КАЛЕНДАРЬ</p><h2>Купоны и дивиденды</h2></div><button className="excel-export-button" type="button" onClick={() => setShowExcelExport(true)}>↓ Excel</button></div>
+        <button className="accounting-export-card" type="button" onClick={() => setShowExcelExport(true)}>
+          <span>XL</span>
+          <div><strong>Скачать инвестиционный учёт</strong><small>Выберите облигации, купоны, дивиденды и нужный период</small></div>
+          <b>›</b>
+        </button>
         {(paymentMonths.length > 0 || dividends > 0 || approvedDividends.length > 0) && <div className="payment-filters" role="group" aria-label="Тип выплаты">
           {(['Все', 'Купоны', 'Дивиденды'] as const).map((filter) => <button className={paymentFilter === filter ? 'active' : ''} type="button" onClick={() => setPaymentFilter(filter)} key={filter}>{filter}</button>)}
         </div>}
@@ -1511,7 +1555,7 @@ ${sheet('Дивиденды', ['Дата реестра', 'Тикер', 'Ком�
         <div className="settings-card data-card">
           <div className="settings-card-title"><div><strong>Ваши данные</strong><small>{isTelegram ? 'Синхронизация работает через Telegram CloudStorage' : 'Сохраняются только в этом браузере'}</small></div><span className={cloudReady ? 'ready' : ''}>{cloudReady ? '☁' : '●'}</span></div>
           <div className="profile-backup-actions">
-            <button type="button" onClick={exportAccountingExcel}>↓ Скачать Excel</button>
+            <button type="button" onClick={() => setShowExcelExport(true)}>↓ Настроить Excel</button>
             <button type="button" onClick={exportPortfolio}>↓ Резервная копия</button>
             <label>↑ Восстановить<input type="file" accept="application/json,.json" onChange={(event) => { void importPortfolio(event.target.files?.[0]) }} /></label>
           </div>
@@ -1759,6 +1803,38 @@ ${sheet('Дивиденды', ['Дата реестра', 'Тикер', 'Ком�
         </div>
       )}
 
+      {showExcelExport && (
+        <div className="modal-backdrop" onClick={() => setShowExcelExport(false)}>
+          <section className="asset-modal excel-export-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setShowExcelExport(false)} aria-label="Закрыть">×</button>
+            <p className="eyebrow">ЭКСПОРТ УЧЁТА</p>
+            <h2>Настройка Excel</h2>
+            <p className="modal-caption">Отметьте данные, которые хотите получить отдельными листами.</p>
+            <div className="excel-section-picker">
+              {([
+                ['portfolio', 'Портфель', 'Текущие активы и результат'],
+                ['bonds', 'Облигации', 'Номинал, купон и погашение'],
+                ['coupons', 'Купоны', 'Календарь купонных выплат'],
+                ['dividends', 'Дивиденды', 'Выплаченные и утверждённые'],
+                ['operations', 'Сделки', 'Покупки, продажи и комиссии'],
+                ['cashFlows', 'Движение денег', 'Пополнения и выводы'],
+              ] as Array<[ExportSection, string, string]>).map(([key, title, description]) => (
+                <button className={exportSections[key] ? 'active' : ''} type="button" onClick={() => setExportSections((current) => ({ ...current, [key]: !current[key] }))} key={key}>
+                  <span>{exportSections[key] ? '✓' : ''}</span><div><strong>{title}</strong><small>{description}</small></div>
+                </button>
+              ))}
+            </div>
+            <p className="operations-subtitle">Период операций и выплат</p>
+            <div className="trade-grid">
+              <label>С даты<input type="date" value={exportFrom} onChange={(event) => setExportFrom(event.target.value)} /></label>
+              <label>По дату<input type="date" value={exportTo} onChange={(event) => setExportTo(event.target.value)} /></label>
+            </div>
+            <p className="detail-note">Если даты не указаны, в файл попадут данные за весь период. Формат совместим с Microsoft Excel.</p>
+            <button className="modal-submit excel-download-submit" type="button" onClick={exportAccountingExcel}>↓ Сформировать и скачать Excel</button>
+          </section>
+        </div>
+      )}
+
       {showOperations && (
         <div className="modal-backdrop" onClick={() => setShowOperations(false)}>
           <section className="asset-modal operations-modal" onClick={(event) => event.stopPropagation()}>
@@ -1784,7 +1860,7 @@ ${sheet('Дивиденды', ['Дата реестра', 'Тикер', 'Ком�
               ))}</div>
             </>}
             <div className="backup-actions">
-              <button type="button" onClick={exportAccountingExcel}>Скачать Excel</button>
+              <button type="button" onClick={() => setShowExcelExport(true)}>Настроить Excel</button>
               <button type="button" onClick={exportPortfolio}>Резервная копия</button>
               <label>Восстановить<input type="file" accept="application/json,.json" onChange={(event) => { void importPortfolio(event.target.files?.[0]) }} /></label>
             </div>
