@@ -473,6 +473,21 @@ function App() {
     const y = 38 - (point.value - chartMin) / chartRange * 32
     return `${x},${y}`
   }).join(' ')
+  const analyticsPeriodLabel: Record<AnalyticsPeriod, string> = {
+    day: 'за день',
+    month: 'за месяц',
+    sixMonths: 'за 6 месяцев',
+    year: 'за год',
+    all: 'за всё время',
+  }
+  const analyticsPeriodResult = (() => {
+    if (analyticsPeriod === 'day') return { value: todayProfit, percent: todayProfitPercent }
+    if (analyticsPeriod === 'all') return { value: profit, percent: profitPercent }
+    if (analyticsHistory.length < 2) return null
+    const start = analyticsHistory[0].value
+    const end = analyticsHistory.at(-1)?.value ?? start
+    return { value: end - start, percent: start ? (end - start) / start * 100 : 0 }
+  })()
 
   const advice = portfolioItems.length === 0
     ? 'Добавьте хотя бы две бумаги — после этого я оценю структуру портфеля.'
@@ -932,7 +947,6 @@ function App() {
         {isTelegram && <div className="telegram-header-actions">
           <span className={`sync-dot ${syncStatus}`}>{syncStatus === 'synced' ? '☁' : '•'}</span>
           <button className="notification-button" type="button" onClick={() => setShowNotifications(true)} aria-label={`Уведомления${unreadNotifications ? `, новых: ${unreadNotifications}` : ''}`}>♢{unreadNotifications > 0 && <i>{Math.min(9, unreadNotifications)}</i>}</button>
-          <button type="button" onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} aria-label="Переключить тему">{theme === 'dark' ? '☀' : '☾'}</button>
           <button className="profile-avatar-button" type="button" onClick={() => setActiveSection('profile')} aria-label="Открыть профиль">{name.slice(0, 1).toLocaleUpperCase('ru')}</button>
         </div>}
         <a className="header-button" href="#market">Начать</a>
@@ -1205,7 +1219,7 @@ function App() {
         <div className="analytics-title"><button type="button" onClick={() => setActiveSection('portfolio')} aria-label="Назад">‹</button><div><p className="eyebrow">ВАШ ПОРТФЕЛЬ</p><h2>Аналитика</h2></div></div>
         <article className="analytics-card">
           <div className="analytics-value"><div><strong>{formatMoney(portfolioValue, 2)}</strong><span>Стоимость портфеля</span></div><span>{currency === 'RUB' ? '₽' : currency === 'USD' ? '$' : '€'}</span></div>
-          {analyticsHistory.length > 1 ? <svg className="analytics-chart" viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Динамика стоимости портфеля"><polygon points={`0,48 ${chartPoints} 100,48`} fill="rgba(76,132,255,.2)" /><polyline points={chartPoints} fill="none" stroke="#66a0ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : <div className="analytics-empty-chart"><span>◒</span><p>График появится после второго дневного значения портфеля</p></div>}
+          {analyticsHistory.length > 1 ? <svg className="analytics-chart" viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Динамика стоимости портфеля"><polygon points={`0,48 ${chartPoints} 100,48`} fill="rgba(76,132,255,.2)" /><polyline points={chartPoints} fill="none" stroke="#66a0ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : <div className="analytics-empty-chart"><span>◒</span><p>Период: {analyticsPeriodLabel[analyticsPeriod]}. График появится после второго дневного значения портфеля.</p></div>}
           <div className="analytics-periods" role="group" aria-label="Период графика">
             {([
               ['day', 'День'],
@@ -1216,13 +1230,13 @@ function App() {
             ] as const).map(([period, label]) => <button className={analyticsPeriod === period ? 'active' : ''} type="button" onClick={() => setAnalyticsPeriod(period)} key={period}>{label}</button>)}
           </div>
           <div className="income-list">
-            <div><span>Общий доход</span><strong className={profit >= 0 ? 'up' : 'down'}>{profit >= 0 ? '+' : ''}{formatMoney(profit, 2)} · {profitPercent.toFixed(2)}%</strong></div>
+            <div className="analytics-period-result"><span>Результат {analyticsPeriodLabel[analyticsPeriod]}</span>{analyticsPeriodResult ? <strong className={analyticsPeriodResult.value >= 0 ? 'up' : 'down'}>{analyticsPeriodResult.value >= 0 ? '+' : ''}{formatMoney(analyticsPeriodResult.value, 2)} · {analyticsPeriodResult.percent.toFixed(2)}%</strong> : <strong>Недостаточно истории</strong>}</div>
             <div><span>Доход от изменения цены</span><strong className={marketProfit >= 0 ? 'up' : 'down'}>{marketProfit >= 0 ? '+' : ''}{formatMoney(marketProfit, 2)}</strong></div>
             <div><span>Дивиденды</span><strong className="up">+{formatMoney(dividends, 2)}</strong></div>
           </div>
         </article>
         <article className="analytics-card">
-          <div className="analytics-card-head"><div><h3>Будущие выплаты</h3><p>{paymentEvents.reduce((sum, payment) => sum + payment.amount, 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ всего</p></div><button type="button" onClick={() => setActiveSection('coupons')}>Все</button></div>
+          <div className="analytics-card-head"><div><h3>Будущие выплаты</h3><p>{paymentEvents.reduce((sum, payment) => sum + payment.amount, 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ всего</p></div><button type="button" onClick={() => { setPaymentFilter('Все'); setActiveSection('coupons') }}>Открыть календарь</button></div>
           {paymentMonths.length ? <div className="payments-bars">{paymentMonths.slice(0, 7).map(([month, payments]) => {
             const amount = payments.reduce((sum, payment) => sum + payment.amount, 0)
             const max = Math.max(...paymentMonths.map(([, values]) => values.reduce((sum, payment) => sum + payment.amount, 0)))
@@ -1230,7 +1244,7 @@ function App() {
           })}</div> : <div className="analytics-empty-chart compact"><p>Добавьте облигации или дивиденды, чтобы увидеть прогноз выплат.</p></div>}
         </article>
         <article className="analytics-card">
-          <div className="analytics-card-head"><div><h3>Структура портфеля</h3><p>По отдельным активам</p></div></div>
+          <div className="analytics-card-head"><div><h3>Структура портфеля</h3><p>По отдельным активам</p></div><button type="button" onClick={() => setActiveSection('portfolio')}>К портфелю</button></div>
           {portfolioItems.length ? <div className="analytics-allocation">
             <div className="donut-chart large" style={{ background: `conic-gradient(${allocationGradient})` }}><span>{formatMoney(portfolioValue)}<small>{portfolioItems.length} активов</small></span></div>
             <div className="holdings-legend">{allocationItems.slice(0, 6).map((item, index) => <div key={item.instrument.ticker}><i style={{ background: allocationColors[index % allocationColors.length] }} /><span>{item.instrument.ticker}</span><strong>{item.share.toFixed(1)}%</strong></div>)}</div>
